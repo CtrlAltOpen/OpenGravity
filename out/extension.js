@@ -19,19 +19,82 @@ function activate(context) {
         }
     }));
     // Register Apply Code Command
-    context.subscriptions.push(vscode.commands.registerCommand('opengravity.applyCode', async (code) => {
-        const editor = vscode.window.activeTextEditor?.document.uri.scheme === 'file' ? vscode.window.activeTextEditor : lastActiveTextEditor;
-        if (editor) {
-            const success = await editor.edit(editBuilder => {
-                if (!editor.selection.isEmpty) {
-                    editBuilder.replace(editor.selection, code);
+    context.subscriptions.push(vscode.commands.registerCommand('opengravity.applyCode', async (payload) => {
+        if (typeof payload === 'string') {
+            const editor = vscode.window.activeTextEditor?.document.uri.scheme === 'file' ? vscode.window.activeTextEditor : lastActiveTextEditor;
+            if (editor) {
+                const success = await editor.edit(editBuilder => {
+                    if (!editor.selection.isEmpty) {
+                        editBuilder.replace(editor.selection, payload);
+                    }
+                    else {
+                        editBuilder.insert(editor.selection.active, payload);
+                    }
+                });
+                if (success) {
+                    await editor.document.save();
+                }
+            }
+            return;
+        }
+        for (const change of payload) {
+            if (!change.file || change.file.trim() === '') {
+                // Failsafe: If no filename could be parsed, open an Untitled document to prevent overwriting the active editor!
+                const doc = await vscode.workspace.openTextDocument({ content: change.code });
+                await vscode.window.showTextDocument(doc, { preview: false });
+                continue;
+            }
+            let targetUri;
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (workspaceFolders) {
+                const root = workspaceFolders[0].uri.fsPath;
+                if (path.isAbsolute(change.file)) {
+                    targetUri = vscode.Uri.file(change.file);
                 }
                 else {
-                    editBuilder.insert(editor.selection.active, code);
+                    targetUri = vscode.Uri.file(path.join(root, change.file));
                 }
-            });
-            if (success) {
-                await editor.document.save();
+            }
+            let editorToUse;
+            let isNewFile = false;
+            if (targetUri && fs.existsSync(targetUri.fsPath)) {
+                const doc = await vscode.workspace.openTextDocument(targetUri);
+                editorToUse = await vscode.window.showTextDocument(doc, { preview: false });
+            }
+            else if (targetUri) {
+                try {
+                    fs.mkdirSync(path.dirname(targetUri.fsPath), { recursive: true });
+                    fs.writeFileSync(targetUri.fsPath, '');
+                    const doc = await vscode.workspace.openTextDocument(targetUri);
+                    editorToUse = await vscode.window.showTextDocument(doc, { preview: false });
+                    isNewFile = true;
+                }
+                catch (e) {
+                    editorToUse = vscode.window.activeTextEditor?.document.uri.scheme === 'file' ? vscode.window.activeTextEditor : lastActiveTextEditor;
+                }
+            }
+            else {
+                editorToUse = vscode.window.activeTextEditor?.document.uri.scheme === 'file' ? vscode.window.activeTextEditor : lastActiveTextEditor;
+            }
+            if (editorToUse) {
+                const document = editorToUse.document;
+                const success = await editorToUse.edit(editBuilder => {
+                    if (change.file || isNewFile) {
+                        const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+                        editBuilder.replace(fullRange, change.code);
+                    }
+                    else {
+                        if (!editorToUse.selection.isEmpty) {
+                            editBuilder.replace(editorToUse.selection, change.code);
+                        }
+                        else {
+                            editBuilder.insert(editorToUse.selection.active, change.code);
+                        }
+                    }
+                });
+                if (success) {
+                    await editorToUse.document.save();
+                }
             }
         }
     }));
@@ -62,7 +125,7 @@ class OllamaViewProvider {
                     await this._handleChat(message.text, message.images || [], message.model);
                     break;
                 case 'applyCode':
-                    vscode.commands.executeCommand('opengravity.applyCode', message.text);
+                    vscode.commands.executeCommand('opengravity.applyCode', message.changes || message.text);
                     break;
                 case 'getModels':
                     const models = await this._ollamaService.getModels();

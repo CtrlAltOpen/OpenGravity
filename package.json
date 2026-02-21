@@ -2,7 +2,7 @@
   "name": "opengravity",
   "displayName": "OpenGravity",
   "description": "AI Agent powered by OpenGravity",
-  "version": "0.0.4",
+  "version": "0.0.9",
   "publisher": "opengravity",
   "repository": {
     "type": "git",

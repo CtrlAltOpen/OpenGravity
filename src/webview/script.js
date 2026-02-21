@@ -35,6 +35,12 @@ window.addEventListener('message', event => {
             setGeneratingState(false);
             removeLoadingIndicator();
             if (currentAssistantMessageDiv) {
+                // Perform one final render now that isGenerating is false to unlock the buttons
+                const contentDiv = currentAssistantMessageDiv.querySelector('.message-content');
+                if (contentDiv) {
+                    contentDiv.innerHTML = formatMessage(currentAssistantMessageContent);
+                }
+
                 const summaryDiv = document.createElement('div');
                 summaryDiv.style.fontSize = '0.8em';
                 summaryDiv.style.color = '#a0a0a0';
@@ -155,6 +161,65 @@ function setGeneratingState(generating) {
         sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
         sendBtn.style.backgroundColor = 'var(--accent-color)';
     }
+
+    // Globally toggle all action buttons in the chat history
+    const applyBtns = document.querySelectorAll('.apply-all-btn');
+    applyBtns.forEach(btn => {
+        if (isGenerating) {
+            btn.dataset.prevState = btn.innerText;
+            btn.innerText = 'Generating...';
+            btn.style.backgroundColor = '#444';
+            btn.style.borderColor = '#444';
+            btn.style.color = '#888';
+            btn.style.cursor = 'not-allowed';
+            btn.disabled = true;
+        } else {
+            const prevState = btn.dataset.prevState || 'Apply All Code Changes';
+            btn.innerText = prevState;
+            if (prevState === 'Applied All Changes!') {
+                btn.style.backgroundColor = '#28a745';
+                btn.style.borderColor = '#28a745';
+                btn.style.color = '#ffffff';
+                btn.disabled = true;
+                btn.style.cursor = 'default';
+            } else {
+                btn.style.backgroundColor = '#2ea043';
+                btn.style.borderColor = '#2ea043';
+                btn.style.color = '#ffffff';
+                btn.disabled = false;
+                btn.style.cursor = 'pointer';
+            }
+        }
+    });
+
+    const approveBtns = document.querySelectorAll('.approve-plan-btn');
+    approveBtns.forEach(btn => {
+        if (isGenerating) {
+            btn.dataset.prevState = btn.innerText;
+            btn.innerText = 'Generating...';
+            btn.style.backgroundColor = '#444';
+            btn.style.borderColor = '#444';
+            btn.style.color = '#888';
+            btn.style.cursor = 'not-allowed';
+            btn.disabled = true;
+        } else {
+            const prevState = btn.dataset.prevState || 'Approve Plan';
+            btn.innerText = prevState;
+            if (prevState === 'Plan Approved!') {
+                btn.style.backgroundColor = '#2ea043';
+                btn.style.borderColor = '#2ea043';
+                btn.style.color = '#ffffff';
+                btn.disabled = true;
+                btn.style.cursor = 'default';
+            } else {
+                btn.style.backgroundColor = '#007acc';
+                btn.style.borderColor = '#007acc';
+                btn.style.color = '#ffffff';
+                btn.disabled = false;
+                btn.style.cursor = 'pointer';
+            }
+        }
+    });
 }
 
 // Initial state
@@ -286,10 +351,15 @@ function formatMessage(text) {
         const index = p1 !== undefined ? p1 : p2;
         const planContent = plans[index];
         const parsedPlan = typeof marked !== 'undefined' ? marked.parse(planContent) : planContent;
+
+        const btnHtml = isGenerating
+            ? `<button class="approve-plan-btn" disabled style="background-color: #444; border-color: #444; color: #888; cursor: not-allowed;">Generating...</button>`
+            : `<button class="approve-plan-btn" onclick="approvePlan(this)">Approve Plan</button>`;
+
         return `<div class="plan-block">
             <div class="plan-header">Implementation Plan</div>
             <div class="plan-content">${parsedPlan}</div>
-            <button class="approve-plan-btn" onclick="approvePlan(this)">Approve Plan</button>
+            ${btnHtml}
         </div>`;
     });
 
@@ -302,7 +372,9 @@ function formatMessage(text) {
 
     // Append a single Apply Code button if code blocks exist
     if (hasCodeBlocks) {
-        content += `<br><button class="apply-all-btn" onclick="applyAllCode(this)">Apply All Code Changes</button>`;
+        content += isGenerating
+            ? `<br><button class="apply-all-btn" disabled style="background-color: #444; border-color: #444; color: #888; cursor: not-allowed;">Generating...</button>`
+            : `<br><button class="apply-all-btn" onclick="applyAllCode(this)">Apply All Code Changes</button>`;
     }
 
     return content;
@@ -346,21 +418,82 @@ function removeLoadingIndicator() {
 // Global function for insert all code
 window.applyAllCode = function (btn) {
     const messageContent = btn.parentElement;
-    const codeBlocks = messageContent.querySelectorAll('pre code');
-    let combinedCode = '';
+    const preElements = messageContent.querySelectorAll('pre');
+    let codeChanges = [];
 
-    codeBlocks.forEach(codeBlock => {
-        combinedCode += codeBlock.innerText + '\n\n';
+    preElements.forEach(pre => {
+        // Try to find the filename from previous siblings
+        let prev = pre.previousElementSibling;
+        let filename = '';
+
+        while (prev) {
+            let text = prev.innerText || prev.textContent || '';
+            text = text.trim();
+
+            if (text) {
+                // 1. Try to find a bold/strong tag first
+                const strong = prev.querySelector('strong');
+                if (strong && strong.innerText.trim()) {
+                    filename = strong.innerText.trim();
+                    break;
+                }
+
+                // 2. Try EM or CODE tags inside the previous element
+                const em = prev.querySelector('em, code');
+                if (em && em.innerText.trim() && !em.innerText.includes(' ')) {
+                    filename = em.innerText.trim();
+                    break;
+                }
+
+                // 3. Fallback: examine the exact text of the line directly above
+                const lines = text.split('\n');
+                let lastLine = lines[lines.length - 1].trim();
+
+                // Remove trailing syntax characters
+                lastLine = lastLine.replace(/[:`*]/g, '').trim();
+
+                if (lastLine) {
+                    const words = lastLine.split(' ');
+                    if (words.length === 1) {
+                        filename = words[0]; // Exactly one word (e.g. "requirements.txt")
+                    } else {
+                        // Look backwards for a word that seems like a filename
+                        for (let i = words.length - 1; i >= 0; i--) {
+                            let w = words[i].replace(/[.,;:!?]$/, '');
+                            if ((w.includes('.') || w.includes('/') || w.includes('\\')) && w.length > 2 && !w.endsWith('.')) {
+                                filename = w;
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+            prev = prev.previousElementSibling;
+        }
+
+        // Clean up any remaining markdown or punctuation
+        if (filename) {
+            filename = filename.replace(/[*`:"']/g, '').trim();
+        }
+
+        const codeBlock = pre.querySelector('code');
+        if (codeBlock) {
+            codeChanges.push({
+                file: filename,
+                code: codeBlock.innerText
+            });
+        }
     });
 
-    if (combinedCode.trim()) {
+    if (codeChanges.length > 0) {
         vscode.postMessage({
             command: 'applyCode',
-            text: combinedCode.trim()
+            changes: codeChanges
         });
 
-        btn.innerText = "Applied All Changes!";
-        btn.style.backgroundColor = "#1e792e";
+        btn.innerText = 'Applied All Changes!';
+        btn.style.backgroundColor = '#28a745';
         btn.disabled = true;
     }
 };
