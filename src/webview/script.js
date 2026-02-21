@@ -11,6 +11,7 @@ let currentAssistantMessageDiv = null;
 let currentAssistantMessageContent = '';
 let currentModel = '';
 let currentActiveModels = [];
+let isGenerating = false;
 
 // Initialize
 window.addEventListener('load', () => {
@@ -27,7 +28,11 @@ window.addEventListener('message', event => {
             removeLoadingIndicator();
             updateAssistantMessage(message.text);
             break;
+        case 'showLoading':
+            addLoadingIndicator();
+            break;
         case 'chatDone':
+            setGeneratingState(false);
             removeLoadingIndicator();
             if (currentAssistantMessageDiv) {
                 const summaryDiv = document.createElement('div');
@@ -119,11 +124,20 @@ modelSelect.addEventListener('change', () => {
 
 // Send Message
 function sendMessage() {
+    if (isGenerating) {
+        // Cancel the current generation
+        vscode.postMessage({ command: 'cancelChat' });
+        setGeneratingState(false);
+        removeLoadingIndicator();
+        return;
+    }
+
     const text = input.value.trim();
     if (!text && images.length === 0) return;
 
     addMessage(text, 'user', images);
     addLoadingIndicator();
+    setGeneratingState(true);
     vscode.postMessage({ command: 'chat', text: text, images: images, model: currentModel });
 
     input.value = '';
@@ -131,6 +145,20 @@ function sendMessage() {
     images = [];
     imagePreview.innerHTML = '';
 }
+
+function setGeneratingState(generating) {
+    isGenerating = generating;
+    if (isGenerating) {
+        sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"></rect></svg>';
+        sendBtn.style.backgroundColor = '#cc3333';
+    } else {
+        sendBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+        sendBtn.style.backgroundColor = 'var(--accent-color)';
+    }
+}
+
+// Initial state
+setGeneratingState(false);
 
 sendBtn.addEventListener('click', sendMessage);
 

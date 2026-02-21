@@ -175,10 +175,13 @@ body {
     color: white;
     border: none;
     border-radius: 4px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 600;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
     cursor: pointer;
+    padding: 0;
 }
 
 #send-btn:hover {

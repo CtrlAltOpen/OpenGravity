@@ -2,7 +2,7 @@
   "name": "opengravity",
   "displayName": "OpenGravity",
   "description": "AI Agent powered by OpenGravity",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "publisher": "opengravity",
   "icon": "opengravitylogo.png",
   "engines": {
@@ -21,14 +21,14 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "opengravity-sidebar-panel",
+          "id": "opengravity-sidebar-v3",
           "title": "OpenGravity",
           "icon": "opengravitylogo.png"
         }
       ]
     },
     "views": {
-      "opengravity-sidebar-panel": [
+      "opengravity-sidebar-v3": [
         {
           "type": "webview",
           "id": "opengravity.chatView",

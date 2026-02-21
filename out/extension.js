@@ -81,6 +81,9 @@ class OllamaViewProvider {
                         model: config.get('model', 'llama3')
                     });
                     break;
+                case 'cancelChat':
+                    this._ollamaService.cancelChat();
+                    break;
             }
         });
     }
@@ -142,6 +145,14 @@ Always answer the user's question directly.`;
                     fullResponse += chunk;
                     this._view?.webview.postMessage({ command: 'chatResponse', text: chunk });
                 }, overrideModel);
+                if (metrics && metrics.aborted) {
+                    this._chatHistory.push({
+                        role: 'assistant',
+                        content: fullResponse + "\n\n*[User physically canceled response generation]*"
+                    });
+                    finalMetrics = metrics;
+                    break;
+                }
                 const matches = [...fullResponse.matchAll(/\[READ_FILE:\s*(.*?)\]/g)];
                 if (matches.length > 0) {
                     let readResults = "";
@@ -169,6 +180,7 @@ Always answer the user's question directly.`;
                         role: 'user',
                         content: `[System Response] Previously requested files have been successfully retrieved:\n${readResults}\nPlease continue answering my original request using this new code context.`
                     });
+                    this._view?.webview.postMessage({ command: 'showLoading' });
                     iterations++;
                 }
                 else {

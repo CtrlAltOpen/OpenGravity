@@ -3,6 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.OllamaService = void 0;
 const vscode = require("vscode");
 class OllamaService {
+    constructor() {
+        this._abortController = new AbortController();
+    }
     async chat(messages, onChunk, modelOverride) {
         const config = vscode.workspace.getConfiguration('opengravity');
         const url = config.get('url', 'http://localhost:11434');
@@ -27,7 +30,8 @@ class OllamaService {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
+                signal: this._abortController.signal
             });
             if (!response.ok) {
                 throw new Error(`Ollama API Error: ${response.status} ${response.statusText}`);
@@ -67,8 +71,12 @@ class OllamaService {
             return null;
         }
         catch (error) {
+            if (error.name === 'AbortError') {
+                return { aborted: true };
+            }
             console.error('Ollama Service Error:', error);
             onChunk(`\n\n**Error:** ${error.message}`);
+            return null;
         }
     }
     async generate(prompt) {
@@ -136,6 +144,10 @@ class OllamaService {
             console.error('Ollama GetActiveModels Error:', e);
             return [];
         }
+    }
+    cancelChat() {
+        this._abortController.abort();
+        this._abortController = new AbortController();
     }
 }
 exports.OllamaService = OllamaService;

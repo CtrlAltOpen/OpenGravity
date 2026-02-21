@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 
 export class OllamaService {
+    private _abortController: AbortController = new AbortController();
+
     public async chat(messages: { role: string, content: string, images?: string[] }[], onChunk: (text: string) => void, modelOverride?: string): Promise<any> {
         const config = vscode.workspace.getConfiguration('opengravity');
         const url = config.get<string>('url', 'http://localhost:11434');
@@ -29,7 +31,8 @@ export class OllamaService {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
+                signal: this._abortController.signal
             });
 
             if (!response.ok) {
@@ -71,8 +74,12 @@ export class OllamaService {
             }
             return null;
         } catch (error: any) {
+            if (error.name === 'AbortError') {
+                return { aborted: true };
+            }
             console.error('Ollama Service Error:', error);
             onChunk(`\n\n**Error:** ${error.message}`);
+            return null;
         }
     }
 
@@ -147,5 +154,10 @@ export class OllamaService {
             console.error('Ollama GetActiveModels Error:', e);
             return [];
         }
+    }
+
+    public cancelChat() {
+        this._abortController.abort();
+        this._abortController = new AbortController();
     }
 }
