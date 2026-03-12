@@ -118,19 +118,45 @@ Applying a preset updates all relevant generation settings (tokens, context, sam
    ```
 5. Press `F5` in VS Code to launch the Extension Development Host and test your local build.
 
-### Optional: Package as a `.vsix`
+### Build the VS Code Package (`.vsix`)
 
-If you want to install your local build manually:
+Note: VS Code extension packages are `.vsix` files (often mistyped as "vsdx").
 
-1. Install the VS Code packaging tool once:
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Compile the extension:
+   ```bash
+   npm run compile
+   ```
+3. Build the package file:
+   ```bash
+   npx @vscode/vsce package
+   ```
+4. Confirm the generated file in the project root (example):
+   ```bash
+   opengravity-0.0.9.vsix
+   ```
+5. Install it in VS Code:
+   - Open **Extensions** (`Ctrl+Shift+X`)
+   - Click `...` (top-right menu)
+   - Select **Install from VSIX...**
+   - Choose the generated `.vsix` file
+
+### Alternative (Global `vsce`)
+
+If you prefer a global command:
+
+1. Install once:
    ```bash
    npm install -g @vscode/vsce
    ```
-2. Package the extension:
+2. Package:
    ```bash
    vsce package
    ```
-3. Install the generated `.vsix` from the Extensions panel (`...` → **Install from VSIX...**).
+
 
 
 
