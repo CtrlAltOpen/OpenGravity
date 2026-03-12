@@ -84,6 +84,32 @@ OpenGravity exposes advanced determinism properties natively inside VS Code sett
 | `opengravity.includeHiddenFilesInList` | Include dotfiles in `list_files` output. | `false` |
 | `opengravity.systemPrompt` | Extra custom system rules appended to base prompt. | `""` |
 
+
+### Provider Setup (Quick Start)
+
+- `Ollama`
+  - Set `opengravity.provider` = `ollama`
+  - Default URL: `http://localhost:11434`
+- `LM Studio`
+  - Set `opengravity.provider` = `lmstudio`
+  - Default URL: `http://localhost:1234`
+- `llama.cpp`
+  - Set `opengravity.provider` = `llamacpp`
+  - Default URL: `http://localhost:8080`
+  - Choose `opengravity.llamacppApiMode`:
+    - `openaiCompat` for `/v1/chat/completions`
+    - `native` for `/completion`
+- `OpenAI-Compatible (generic local)`
+  - Set `opengravity.provider` = `openaiCompatible`
+  - Default URL: `http://localhost:8000`
+
+Run **OpenGravity: Test Connection** from the Command Palette to validate connectivity and auto-populate the model name from the remote endpoint.
+
+If llama.cpp does not connect, verify:
+- The server is running and reachable at `opengravity.llamacppUrl`.
+- API mode matches your server endpoint style.
+- Endpoint paths are correct (`/v1/chat/completions` or `/completion`).
+- `opengravity.url` (legacy) is not pointing to another provider port.
 ### Preset Profiles
 
 Run **OpenGravity: Apply Preset** from the Command Palette to instantly switch tuning:
@@ -163,6 +189,8 @@ If you prefer a global command:
    ```bash
    vsce package
    ```
+
+
 
 
 

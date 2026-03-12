@@ -5,6 +5,7 @@ const input = document.getElementById('prompt-input');
 const sendBtn = document.getElementById('send-btn');
 const imagePreview = document.getElementById('image-preview');
 const modelSelect = document.getElementById('model-select');
+const thinkingSelect = document.getElementById('thinking-select');
 
 let images = [];
 let currentAssistantMessageDiv = null;
@@ -12,6 +13,7 @@ let currentAssistantMessageContent = '';
 let currentModel = '';
 let currentActiveModels = [];
 let isGenerating = false;
+let currentThinkingLevel = 'medium';
 
 // Initialize
 window.addEventListener('load', () => {
@@ -72,6 +74,10 @@ window.addEventListener('message', event => {
                     modelSelect.value = currentModel;
                 }
             }
+            if (message.thinkingLevel && thinkingSelect) {
+                currentThinkingLevel = message.thinkingLevel;
+                thinkingSelect.value = currentThinkingLevel;
+            }
             break;
         case 'updateActiveModels':
             currentActiveModels = message.activeModels || [];
@@ -128,6 +134,13 @@ modelSelect.addEventListener('change', () => {
     vscode.postMessage({ command: 'setModel', model: currentModel });
 });
 
+if (thinkingSelect) {
+    thinkingSelect.addEventListener('change', () => {
+        currentThinkingLevel = thinkingSelect.value;
+        vscode.postMessage({ command: 'setThinkingLevel', thinkingLevel: currentThinkingLevel });
+    });
+}
+
 // Send Message
 function sendMessage() {
     if (isGenerating) {
@@ -144,7 +157,7 @@ function sendMessage() {
     addMessage(text, 'user', images);
     addLoadingIndicator();
     setGeneratingState(true);
-    vscode.postMessage({ command: 'chat', text: text, images: images, model: currentModel });
+    vscode.postMessage({ command: 'chat', text: text, images: images, model: currentModel, thinkingLevel: currentThinkingLevel });
 
     input.value = '';
     input.style.height = 'auto'; // Reset height
@@ -394,6 +407,10 @@ function escapeHtml(unsafe) {
 }
 
 function addLoadingIndicator() {
+    if (document.getElementById('loading-indicator')) {
+        return;
+    }
+
     const div = document.createElement('div');
     div.id = 'loading-indicator';
     div.className = 'message assistant';
@@ -504,6 +521,7 @@ window.applyAllCode = function (btn) {
 
 window.approvePlan = function (btn) {
     const text = "I approve the exact plan proposed above. Please execute this plan now and write the actual code changes.";
+    setGeneratingState(true);
     addMessage(text, 'user', []);
     addLoadingIndicator();
 
@@ -511,7 +529,8 @@ window.approvePlan = function (btn) {
         command: 'chat',
         text: text,
         images: [],
-        model: currentModel
+        model: currentModel,
+        thinkingLevel: currentThinkingLevel
     });
 
     // Visual feedback
@@ -519,6 +538,7 @@ window.approvePlan = function (btn) {
     btn.style.backgroundColor = "#2ea043"; // Success green
     btn.disabled = true;
 };
+
 
 
 

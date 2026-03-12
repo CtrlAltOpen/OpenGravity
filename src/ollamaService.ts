@@ -23,6 +23,16 @@ export type ParsedToolCall = {
     arguments: Record<string, any>;
 };
 
+export type ConnectionDiagnostics = {
+    ok: boolean;
+    provider: string;
+    mode: string;
+    baseUrl: string;
+    testedEndpoints: string[];
+    models: string[];
+    error?: string;
+};
+
 type GenerateOptions = {
     maxTokens?: number;
 };
@@ -62,6 +72,13 @@ export class OllamaService {
             || legacyUrlInspect?.workspaceFolderValue !== undefined
         );
 
+        const providerUrlKeys: Record<string, string> = {
+            ollama: 'ollamaUrl',
+            lmstudio: 'lmstudioUrl',
+            llamacpp: 'llamacppUrl',
+            openaiCompatible: 'openaiCompatibleUrl'
+        };
+
         const providerUrls: Record<string, string> = {
             ollama: config.get<string>('ollamaUrl', 'http://localhost:11434'),
             lmstudio: config.get<string>('lmstudioUrl', 'http://localhost:1234'),
@@ -69,8 +86,17 @@ export class OllamaService {
             openaiCompatible: config.get<string>('openaiCompatibleUrl', 'http://localhost:8000')
         };
 
+        const providerUrlKey = providerUrlKeys[provider] || 'ollamaUrl';
+        const providerUrlInspect = config.inspect<string>(providerUrlKey);
+        const providerUrlSet = Boolean(
+            providerUrlInspect?.globalValue !== undefined
+            || providerUrlInspect?.workspaceValue !== undefined
+            || providerUrlInspect?.workspaceFolderValue !== undefined
+        );
+
         let baseUrl = providerUrls[provider] || providerUrls.ollama;
-        if (legacyUrlSet && legacyUrl) {
+        // Backward compatibility: use legacy URL only if provider-specific URL was never set.
+        if (!providerUrlSet && legacyUrlSet && legacyUrl) {
             baseUrl = legacyUrl;
         }
 
@@ -500,18 +526,104 @@ export class OllamaService {
         }
     }
 
+    private _extractModelNames(payload: any): string[] {
+        if (!payload) {
+            return [];
+        }
+
+        const fromModels = Array.isArray(payload.models)
+            ? payload.models.map((m: any) => m?.id || m?.name)
+            : [];
+        const fromData = Array.isArray(payload.data)
+            ? payload.data.map((m: any) => m?.id || m?.name)
+            : [];
+
+        const names = [...fromModels, ...fromData]
+            .map((v) => typeof v === 'string' ? v : '')
+            .filter(Boolean);
+
+        if (names.length > 0) {
+            return names;
+        }
+
+        if (typeof payload.model_path === 'string' && payload.model_path) {
+            return [path.basename(payload.model_path)];
+        }
+
+        return [];
+    }
+
+    public async diagnoseConnection(): Promise<ConnectionDiagnostics> {
+        const cfg = this._getProviderConfig();
+        const testedEndpoints: string[] = [];
+        const mode = cfg.kind === 'llamacppNative' ? 'llamacpp-native' : cfg.kind;
+
+        let candidates: string[] = [];
+        if (cfg.kind === 'openaiCompat') {
+            candidates = cfg.provider === 'llamacpp' ? ['/v1/models', '/models'] : ['/v1/models'];
+        } else if (cfg.kind === 'llamacppNative') {
+            candidates = ['/props', '/models'];
+        } else {
+            candidates = ['/api/tags'];
+        }
+
+        for (const candidate of candidates) {
+            const endpoint = this._normalizeEndpoint(cfg.baseUrl, candidate);
+            try {
+                const response = await fetch(endpoint, { signal: this._abortController.signal });
+                testedEndpoints.push(`${endpoint} -> ${response.status}`);
+
+                if (!response.ok) {
+                    continue;
+                }
+
+                const payload: any = await response.json();
+                const models = this._extractModelNames(payload);
+                return {
+                    ok: true,
+                    provider: cfg.provider,
+                    mode,
+                    baseUrl: cfg.baseUrl,
+                    testedEndpoints,
+                    models
+                };
+            } catch (error: any) {
+                testedEndpoints.push(`${endpoint} -> error: ${error?.message || String(error)}`);
+            }
+        }
+
+        return {
+            ok: false,
+            provider: cfg.provider,
+            mode,
+            baseUrl: cfg.baseUrl,
+            testedEndpoints,
+            models: [],
+            error: 'Could not reach a valid endpoint for the selected provider.'
+        };
+    }
+
     public async getModels(): Promise<string[]> {
         const cfg = this._getProviderConfig();
 
         try {
             if (cfg.kind === 'openaiCompat') {
-                const endpoint = this._normalizeEndpoint(cfg.baseUrl, '/v1/models');
-                const response = await fetch(endpoint);
-                if (!response.ok) {
-                    return [];
+                const candidateEndpoints = cfg.provider === 'llamacpp'
+                    ? ['/v1/models', '/models']
+                    : ['/v1/models'];
+
+                for (const candidate of candidateEndpoints) {
+                    const response = await fetch(this._normalizeEndpoint(cfg.baseUrl, candidate));
+                    if (!response.ok) {
+                        continue;
+                    }
+                    const json: any = await response.json();
+                    const models = (json.data || json.models || []).map((m: any) => m.id || m.name).filter(Boolean);
+                    if (models.length > 0) {
+                        return models;
+                    }
                 }
-                const json: any = await response.json();
-                return (json.data || []).map((m: any) => m.id).filter(Boolean);
+                return [];
             }
 
             if (cfg.kind === 'llamacppNative') {
@@ -582,3 +694,8 @@ export class OllamaService {
         this._abortController = new AbortController();
     }
 }
+
+
+
+
+

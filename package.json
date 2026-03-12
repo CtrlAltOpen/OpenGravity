@@ -48,6 +48,10 @@
       {
         "command": "opengravity.applyPreset",
         "title": "OpenGravity: Apply Preset"
+      },
+      {
+        "command": "opengravity.testConnection",
+        "title": "OpenGravity: Test Connection"
       }
     ],
     "configuration": {
@@ -63,117 +67,152 @@
             "openaiCompatible"
           ],
           "default": "ollama",
-          "description": "AI API Provider (Ollama, LM Studio, llama.cpp server, or generic OpenAI-compatible local endpoint)"
+          "description": "Local model backend provider.",
+          "enumItemLabels": [
+            "Ollama",
+            "LM Studio",
+            "llama.cpp",
+            "OpenAI Compatible (Local)"
+          ],
+          "enumDescriptions": [
+            "Native Ollama API on port 11434 by default.",
+            "OpenAI-compatible API exposed by LM Studio, usually on port 1234.",
+            "llama.cpp server; supports OpenAI-compatible or native /completion mode.",
+            "Any local endpoint that implements OpenAI chat completions."
+          ],
+          "order": 10
         },
         "opengravity.url": {
           "type": "string",
           "default": "http://localhost:11434",
-          "description": "Legacy fallback base URL. Prefer provider-specific URL settings below."
+          "description": "Legacy fallback URL used only when provider-specific URL is not set.",
+          "order": 99
         },
         "opengravity.model": {
           "type": "string",
           "default": "qwen2.5-coder:7b",
-          "description": "Model to use for generation"
+          "description": "Model to use for generation",
+          "order": 30
         },
         "opengravity.systemPrompt": {
           "type": "string",
           "default": "",
-          "description": "Custom global instructions appended to the agent's absolute system prompt"
+          "description": "Custom global instructions appended to the agent's absolute system prompt",
+          "order": 31
         },
         "opengravity.temperature": {
           "type": "number",
           "default": 0.15,
-          "description": "Sampling temperature. Lower is more deterministic for coding."
+          "description": "Sampling temperature. Lower is more deterministic for coding.",
+          "order": 42
         },
         "opengravity.maxTokens": {
           "type": "integer",
           "default": 4096,
-          "description": "Maximum tokens generated for each chat turn."
+          "description": "Maximum tokens generated for each chat turn.",
+          "order": 41
         },
         "opengravity.contextLength": {
           "type": "integer",
           "default": 16384,
-          "description": "Model context window for chat/tool use (Ollama num_ctx)."
+          "description": "Model context window for chat/tool use (Ollama num_ctx).",
+          "order": 40
         },
         "opengravity.topP": {
           "type": "number",
           "default": 0.9,
-          "description": "Nucleus sampling (top_p)."
+          "description": "Nucleus sampling (top_p).",
+          "order": 43
         },
         "opengravity.topK": {
           "type": "integer",
           "default": 40,
-          "description": "Top-K sampling (Ollama/OpenAI-compatible when supported)."
+          "description": "Top-K sampling (Ollama/OpenAI-compatible when supported).",
+          "order": 44
         },
         "opengravity.enableAutocomplete": {
           "type": "boolean",
           "default": true,
-          "description": "Enable inline ghost text autocomplete"
+          "description": "Enable inline ghost text autocomplete",
+          "order": 60
         },
         "opengravity.agentMaxSteps": {
           "type": "integer",
           "default": 8,
-          "description": "Maximum tool-iteration steps per chat request"
+          "description": "Maximum tool-iteration steps per chat request",
+          "order": 49
         },
         "opengravity.maxReadFileBytes": {
           "type": "integer",
           "default": 150000,
-          "description": "Maximum file bytes the read_file tool returns in one call"
+          "description": "Maximum file bytes the read_file tool returns in one call",
+          "order": 72
         },
         "opengravity.enableTerminalTool": {
           "type": "boolean",
           "default": false,
-          "description": "Allow the agent to run terminal commands in the workspace root"
+          "description": "Allow the agent to run terminal commands in the workspace root",
+          "order": 70
         },
         "opengravity.terminalCommandTimeoutMs": {
           "type": "integer",
           "default": 20000,
-          "description": "Timeout for run_terminal_command tool in milliseconds"
+          "description": "Timeout for run_terminal_command tool in milliseconds",
+          "order": 71
         },
         "opengravity.includeHiddenFilesInList": {
           "type": "boolean",
           "default": false,
-          "description": "Include dotfiles in list_files tool output"
+          "description": "Include dotfiles in list_files tool output",
+          "order": 73
         },
         "opengravity.enableNativeToolCalling": {
           "type": "boolean",
           "default": true,
-          "description": "Enable native function-calling when the selected local provider/model supports it"
+          "description": "Enable native function-calling when the selected local provider/model supports it",
+          "order": 50
         },
         "opengravity.repeatPenalty": {
           "type": "number",
           "default": 1.1,
-          "description": "Repeat penalty to reduce loops/repetition (primarily Ollama)."
+          "description": "Repeat penalty to reduce loops/repetition (primarily Ollama).",
+          "order": 45
         },
         "opengravity.presencePenalty": {
           "type": "number",
           "default": 0,
-          "description": "Presence penalty for OpenAI-compatible backends that support it."
+          "description": "Presence penalty for OpenAI-compatible backends that support it.",
+          "order": 46
         },
         "opengravity.frequencyPenalty": {
           "type": "number",
           "default": 0,
-          "description": "Frequency penalty for OpenAI-compatible backends that support it."
+          "description": "Frequency penalty for OpenAI-compatible backends that support it.",
+          "order": 47
         },
         "opengravity.seed": {
           "type": "integer",
           "default": 42,
-          "description": "Seed for more reproducible generations. Set -1 to let backend choose randomness."
+          "description": "Seed for more reproducible generations. Set -1 to let backend choose randomness.",
+          "order": 48
         },
         "opengravity.autocompleteContextLength": {
           "type": "integer",
           "default": 2000,
-          "description": "Characters of prefix context sent for inline completion."
+          "description": "Characters of prefix context sent for inline completion.",
+          "order": 61
         },
         "opengravity.autocompleteMaxTokens": {
           "type": "integer",
           "default": 128,
-          "description": "Maximum tokens generated for inline completion."
+          "description": "Maximum tokens generated for inline completion.",
+          "order": 62
         },
         "opengravity.autocompleteDebounceMs": {
           "type": "integer",
           "default": 300,
-          "description": "Debounce delay for inline completion requests in milliseconds."
+          "description": "Debounce delay for inline completion requests in milliseconds.",
+          "order": 63
         },
         "opengravity.presetProfile": {
           "type": "string",
@@ -184,27 +223,32 @@
             "custom"
           ],
           "default": "balanced",
-          "description": "Named tuning preset. This is updated when you run OpenGravity: Apply Preset."
+          "description": "Named tuning preset. This is updated when you run OpenGravity: Apply Preset.",
+          "order": 20
         },
         "opengravity.ollamaUrl": {
           "type": "string",
           "default": "http://localhost:11434",
-          "description": "Ollama server URL (default port 11434)."
+          "description": "Ollama base URL (default: http://localhost:11434).",
+          "order": 80
         },
         "opengravity.lmstudioUrl": {
           "type": "string",
           "default": "http://localhost:1234",
-          "description": "LM Studio server URL (default port 1234)."
+          "description": "LM Studio base URL (default: http://localhost:1234).",
+          "order": 81
         },
         "opengravity.llamacppUrl": {
           "type": "string",
           "default": "http://localhost:8080",
-          "description": "llama.cpp server URL (default port 8080)."
+          "description": "llama.cpp base URL (default: http://localhost:8080).",
+          "order": 82
         },
         "opengravity.openaiCompatibleUrl": {
           "type": "string",
           "default": "http://localhost:8000",
-          "description": "Generic OpenAI-compatible local endpoint URL (common default port 8000)."
+          "description": "Generic OpenAI-compatible base URL (default: http://localhost:8000).",
+          "order": 83
         },
         "opengravity.llamacppApiMode": {
           "type": "string",
@@ -213,17 +257,52 @@
             "native"
           ],
           "default": "openaiCompat",
-          "description": "llama.cpp API mode: OpenAI-compatible chat endpoints or native /completion endpoints."
+          "description": "llama.cpp API mode. Use OpenAI-Compatible for /v1/chat/completions or Native for /completion.",
+          "order": 84,
+          "enumItemLabels": [
+            "OpenAI-Compatible",
+            "Native (/completion)"
+          ],
+          "enumDescriptions": [
+            "Use chat endpoint style compatible with OpenAI clients.",
+            "Use llama.cpp native completion endpoint and prompt format."
+          ]
         },
         "opengravity.llamacppChatEndpoint": {
           "type": "string",
           "default": "/v1/chat/completions",
-          "description": "llama.cpp chat endpoint when API mode is openaiCompat."
+          "description": "llama.cpp chat endpoint path used in OpenAI-compatible mode.",
+          "order": 85
         },
         "opengravity.llamacppCompletionEndpoint": {
           "type": "string",
           "default": "/completion",
-          "description": "llama.cpp completion endpoint when API mode is native."
+          "description": "llama.cpp completion endpoint path used in native mode.",
+          "order": 86
+        },
+        "opengravity.thinkingLevel": {
+          "type": "string",
+          "enum": [
+            "off",
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium",
+          "description": "Reasoning effort level for thinking-capable models.",
+          "order": 35,
+          "enumItemLabels": [
+            "Off",
+            "Low",
+            "Medium",
+            "High"
+          ],
+          "enumDescriptions": [
+            "Fastest responses with minimal deliberation.",
+            "Light reasoning, faster responses.",
+            "Balanced reasoning depth and speed.",
+            "Deepest reasoning with extra validation."
+          ]
         }
       }
     }

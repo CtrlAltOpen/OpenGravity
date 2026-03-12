@@ -197,6 +197,34 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`OpenGravity preset applied: ${preset}.`);
     }));
 
+    context.subscriptions.push(vscode.commands.registerCommand('opengravity.testConnection', async () => {
+        const service = new OllamaService();
+        const diagnostics = await service.diagnoseConnection();
+
+        if (!diagnostics.ok) {
+            const details = diagnostics.testedEndpoints.join(' | ');
+            vscode.window.showErrorMessage(`OpenGravity connection failed (${diagnostics.provider}). ${diagnostics.error || ''} ${details}`.trim());
+            return;
+        }
+
+        const config = vscode.workspace.getConfiguration('opengravity');
+        const currentModel = config.get<string>('model', '');
+        const models = diagnostics.models;
+        let selectedModel = currentModel;
+
+        if (models.length > 0) {
+            if (!currentModel || !models.includes(currentModel)) {
+                selectedModel = models[0];
+                await config.update('model', selectedModel, vscode.ConfigurationTarget.Global);
+            }
+        }
+
+        const modelPart = selectedModel
+            ? `Model: ${selectedModel}`
+            : 'Model: (none reported by endpoint)';
+
+        vscode.window.showInformationMessage(`OpenGravity connected to ${diagnostics.provider} at ${diagnostics.baseUrl}. ${modelPart}`);
+    }));
     const inlineProvider = vscode.languages.registerInlineCompletionItemProvider(
         { pattern: '**' },
         new OllamaCompletionProvider()
@@ -237,7 +265,7 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
             async message => {
                 switch (message.command) {
                     case 'chat':
-                        await this._handleChat(message.text, message.images || [], message.model);
+                        await this._handleChat(message.text, message.images || [], message.model, message.thinkingLevel);
                         break;
                     case 'applyCode':
                         vscode.commands.executeCommand('opengravity.applyCode', message.changes || message.text);
@@ -261,9 +289,13 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
                             const config = vscode.workspace.getConfiguration('opengravity');
                             this._view?.webview.postMessage({
                                 command: 'settings',
-                                model: config.get<string>('model', 'qwen2.5-coder:7b')
+                                model: config.get<string>('model', 'qwen2.5-coder:7b'),
+                                thinkingLevel: config.get<string>('thinkingLevel', 'medium')
                             });
                         }
+                        break;
+                    case 'setThinkingLevel':
+                        await vscode.workspace.getConfiguration('opengravity').update('thinkingLevel', message.thinkingLevel || 'medium', vscode.ConfigurationTarget.Global);
                         break;
                     case 'cancelChat':
                         this._ollamaService.cancelChat();
@@ -273,11 +305,21 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
         );
     }
 
-    private async _handleChat(text: string, images: string[], overrideModel?: string) {
+    private async _handleChat(text: string, images: string[], overrideModel?: string, thinkingLevel?: string) {
         try {
             const contextMsg = await this._buildContextMessage();
             const config = vscode.workspace.getConfiguration('opengravity');
             const customSystemPrompt = config.get<string>('systemPrompt', '');
+            const selectedThinking = (thinkingLevel || config.get<string>('thinkingLevel', 'medium') || 'medium').toLowerCase();
+
+            let thinkingInstruction = 'Thinking level is MEDIUM: balance depth and speed for reliable coding changes.';
+            if (selectedThinking === 'off') {
+                thinkingInstruction = 'Thinking level is OFF: respond quickly with minimal deliberation while staying correct.';
+            } else if (selectedThinking === 'low') {
+                thinkingInstruction = 'Thinking level is LOW: keep reasoning brief and prioritize speed.';
+            } else if (selectedThinking === 'high') {
+                thinkingInstruction = 'Thinking level is HIGH: spend extra effort validating assumptions, edge cases, and correctness.';
+            }
 
             const systemPrompt = `You are OpenGravity, a local-first coding agent running inside VS Code.
 Be precise, pragmatic, and safe.
@@ -286,6 +328,8 @@ Before writing or changing code, gather enough evidence from project files and s
 If a request is ambiguous, state your assumptions briefly and proceed with the most likely path.
 ${AgentRuntime.getToolInstructions()}
 Return concise markdown in final answers.
+${thinkingInstruction}
+
 ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''}`;
 
             const fullSystemContext = `${systemPrompt}\n\n${contextMsg}`;
@@ -395,6 +439,13 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
         return htmlContent;
     }
 }
+
+
+
+
+
+
+
 
 
 

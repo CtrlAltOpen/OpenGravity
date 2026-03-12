@@ -11,7 +11,7 @@
 
 <body>
     <div id="header">
-        <div style="display: flex; align-items: center; gap: 8px;">
+        <div class="header-left">
             <img src="${logoUri}" alt="OpenGravity Logo" style="height: 24px; width: 24px; border-radius: 4px;">
             <div class="title">OpenGravity</div>
         </div>
@@ -34,7 +34,12 @@
             <textarea id="prompt-input" rows="1" placeholder="Ask OpenGravity..."></textarea>
             <div id="input-controls">
                 <div class="left-controls">
-                    <!-- Future: Attach icons -->
+                    <select id="thinking-select" title="Thinking Level">
+                        <option value="off">Thinking: Off</option>
+                        <option value="low">Thinking: Low</option>
+                        <option value="medium" selected>Thinking: Medium</option>
+                        <option value="high">Thinking: High</option>
+                    </select>
                 </div>
                 <button id="send-btn">Send</button>
             </div>
