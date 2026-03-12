@@ -74,3 +74,34 @@ OpenGravity exposes advanced determinism properties natively inside VS Code sett
 7. If the OpenGravity sidebar does not automatically appear on the right, press `Ctrl+Alt+B` (or `Cmd+Option+B` on Mac) to toggle the **Secondary Side Bar**, then explicitly drag the OpenGravity logo from the left Activity bar into it to dock it securely!
 
 *Note: For maximum performance and context retention, a GPU with at least 8GB of VRAM is recommended.*
+
+## 🔧 Build From Source (Compile)
+
+1. Clone this repo and open it in VS Code.
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Compile TypeScript:
+   ```bash
+   npm run compile
+   ```
+4. (Optional) Rebuild automatically while editing:
+   ```bash
+   npm run watch
+   ```
+5. Press `F5` in VS Code to launch the Extension Development Host and test your local build.
+
+### Optional: Package as a `.vsix`
+
+If you want to install your local build manually:
+
+1. Install the VS Code packaging tool once:
+   ```bash
+   npm install -g @vscode/vsce
+   ```
+2. Package the extension:
+   ```bash
+   vsce package
+   ```
+3. Install the generated `.vsix` from the Extensions panel (`...` → **Install from VSIX...**).

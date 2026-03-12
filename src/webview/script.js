@@ -336,10 +336,14 @@ function formatMessage(text) {
         return `%%%PLAN_${plans.length - 1}%%%`;
     });
 
-    // Extract File Chips
+    // Extract File / Tool Chips
     const chips = [];
     cleanedText = cleanedText.replace(/\[\[FILE_READ_CHIP:\s*(.+?)\]\]/g, (match, file) => {
-        chips.push(file);
+        chips.push(`Read file: ${file}`);
+        return `%%%CHIP_${chips.length - 1}%%%`;
+    });
+    cleanedText = cleanedText.replace(/\[\[TOOL:\s*(.+?)\]\]/g, (match, tool) => {
+        chips.push(`Tool: ${tool}`);
         return `%%%CHIP_${chips.length - 1}%%%`;
     });
 
@@ -367,7 +371,7 @@ function formatMessage(text) {
     content = content.replace(/<p>%%%CHIP_(\d+)%%%<\/p>|%%%CHIP_(\d+)%%%/g, (match, p1, p2) => {
         const index = p1 !== undefined ? p1 : p2;
         const file = chips[index];
-        return `<span class="file-chip">Read file: <code>${file}</code></span>`;
+        return `<span class="file-chip"><code>${file}</code></span>`;
     });
 
     // Append a single Apply Code button if code blocks exist
@@ -515,3 +519,6 @@ window.approvePlan = function (btn) {
     btn.style.backgroundColor = "#2ea043"; // Success green
     btn.disabled = true;
 };
+
+
+

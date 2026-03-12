@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { OllamaService } from './ollamaService';
 import { OllamaCompletionProvider } from './completionProvider';
+import { AgentRuntime } from './agentRuntime';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('OpenGravity is now active!');
@@ -22,7 +23,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }));
 
-    // Register Apply Code Command
     context.subscriptions.push(vscode.commands.registerCommand('opengravity.applyCode', async (payload: { file: string, code: string }[] | string) => {
         if (typeof payload === 'string') {
             const editor = vscode.window.activeTextEditor?.document.uri.scheme === 'file' ? vscode.window.activeTextEditor : lastActiveTextEditor;
@@ -43,7 +43,6 @@ export function activate(context: vscode.ExtensionContext) {
 
         for (const change of payload) {
             if (!change.file || change.file.trim() === '') {
-                // Failsafe: If no filename could be parsed, open an Untitled document to prevent overwriting the active editor!
                 const doc = await vscode.workspace.openTextDocument({ content: change.code });
                 await vscode.window.showTextDocument(doc, { preview: false });
                 continue;
@@ -106,7 +105,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }));
 
-    // Register Inline Completion Provider
     const inlineProvider = vscode.languages.registerInlineCompletionItemProvider(
         { pattern: '**' },
         new OllamaCompletionProvider()
@@ -143,7 +141,6 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-        // Handle messages from the webview
         webviewView.webview.onDidReceiveMessage(
             async message => {
                 switch (message.command) {
@@ -154,21 +151,27 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
                         vscode.commands.executeCommand('opengravity.applyCode', message.changes || message.text);
                         break;
                     case 'getModels':
-                        const models = await this._ollamaService.getModels();
-                        const activeModels = await this._ollamaService.getActiveModels();
-                        this._view?.webview.postMessage({ command: 'modelsList', models: models, activeModels: activeModels });
+                        {
+                            const models = await this._ollamaService.getModels();
+                            const activeModels = await this._ollamaService.getActiveModels();
+                            this._view?.webview.postMessage({ command: 'modelsList', models: models, activeModels: activeModels });
+                        }
                         break;
                     case 'setModel':
                         await vscode.workspace.getConfiguration('opengravity').update('model', message.model, vscode.ConfigurationTarget.Global);
-                        const active = await this._ollamaService.getActiveModels();
-                        this._view?.webview.postMessage({ command: 'updateActiveModels', activeModels: active });
+                        {
+                            const active = await this._ollamaService.getActiveModels();
+                            this._view?.webview.postMessage({ command: 'updateActiveModels', activeModels: active });
+                        }
                         break;
                     case 'getSettings':
-                        const config = vscode.workspace.getConfiguration('opengravity');
-                        this._view?.webview.postMessage({
-                            command: 'settings',
-                            model: config.get<string>('model', 'llama3')
-                        });
+                        {
+                            const config = vscode.workspace.getConfiguration('opengravity');
+                            this._view?.webview.postMessage({
+                                command: 'settings',
+                                model: config.get<string>('model', 'llama3')
+                            });
+                        }
                         break;
                     case 'cancelChat':
                         this._ollamaService.cancelChat();
@@ -180,138 +183,84 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
 
     private async _handleChat(text: string, images: string[], overrideModel?: string) {
         try {
-            // Gather Context
-            let contextMsg = '';
-
-            // 1. All Open Text Documents
-            const documents = vscode.workspace.textDocuments;
-            if (documents.length > 0) {
-                contextMsg += '\n\n<open_files>\n';
-                for (const doc of documents) {
-                    if (doc.uri.scheme === 'file' && !doc.fileName.includes(path.sep + 'node_modules' + path.sep)) {
-                        const fileName = path.basename(doc.fileName);
-                        contextMsg += `<file name="${fileName}" path="${doc.uri.fsPath}">\n${doc.getText()}\n</file>\n`;
-                    }
-                }
-                contextMsg += '</open_files>';
-            }
-
-            // 2. File Tree (Simplified)
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (workspaceFolders) {
-                const tree = await this._getFileTree(workspaceFolders[0].uri);
-                contextMsg += `\n\n<file_tree>\n${tree}\n</file_tree>`;
-            }
-
-            // Get Custom System overrides
+            const contextMsg = await this._buildContextMessage();
             const config = vscode.workspace.getConfiguration('opengravity');
             const customSystemPrompt = config.get<string>('systemPrompt', '');
 
-            // Construct Prompt with System Instructions
-            const systemPrompt = `You are "OpenGravity", an expert coding assistant acting as an agent within VS Code.
-Your goal is to be helpful, concise, and accurate and you must always use perfect grammar and spelling.
-You have access to the user's OPEN FILES and the PROJECT STRUCTURE in the XML tags below.
-<open_files> tags contain the contents of all files currently open in the editor.
-<file_tree> tags contain the project structure and hierarchy.
-If you need to read the contents of a file that is in the <file_tree> but not in the <open_files>, you MUST request it by outputting the following exact syntax: [READ_FILE: path/to/file.ext]. The system will read the file and provide it to you so you can complete the answer.
-CRITICAL CONSTRAINT: For ANY complex instruction or code change, you MUST FIRST output an implementation plan wrapped entirely in <plan> ... </plan> tags!
-You are strongly FORBIDDEN from writing any markdown code blocks (\`\`\`) in your initial response! You must only output the plan. You will only be allowed to output actual code blocks AFTER the user responds with "I approve the exact plan...".
+            const systemPrompt = `You are OpenGravity, a local-first coding agent running inside VS Code.
+Be precise, pragmatic, and safe.
+You can inspect and modify the workspace through tools.
+Before writing or changing code, gather enough evidence from project files and search results.
+If a request is ambiguous, state your assumptions briefly and proceed with the most likely path.
+${AgentRuntime.getToolInstructions()}
+Return concise markdown in final answers.
+${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''}`;
 
-FORMATTING REQUIREMENTS:
-- Use markdown to properly format all text.
-- Use bullet lists where appropriate to organize explanations.
-- Logically group code changes by file.
-- Clearly note the exact filename in bold BEFORE any code block (e.g., **path/to/filename.ts**).
-
-Use this context to answer questions about the codebase without needing the user to copy-paste code.
-Always answer the user's question directly.
-${customSystemPrompt ? `\nUSER SPECIFIC INSTRUCTIONS:\n${customSystemPrompt}\n` : ''}`;
-
-            const fullSystemContext = `${systemPrompt}\n${contextMsg}`;
-
+            const fullSystemContext = `${systemPrompt}\n\n${contextMsg}`;
             if (this._chatHistory.length === 0) {
-                this._chatHistory.push({
-                    role: 'system',
-                    content: fullSystemContext
-                });
+                this._chatHistory.push({ role: 'system', content: fullSystemContext });
             } else {
-                // Keep context fresh without infinitely duplicating file contents into the chat stream!
                 this._chatHistory[0].content = fullSystemContext;
             }
 
-            this._chatHistory.push({
-                role: 'user',
-                content: text,
-                images: images.length > 0 ? images : undefined
+            this._view?.webview.postMessage({ command: 'showLoading' });
+
+            const runtime = new AgentRuntime(this._ollamaService, {
+                onStatus: (status) => this._view?.webview.postMessage({ command: 'chatResponse', text: status })
             });
 
-            let iterations = 0;
-            const maxIterations = 10;
-            let finalMetrics: any = null;
+            const result = await runtime.run({
+                history: this._chatHistory,
+                userMessage: {
+                    role: 'user',
+                    content: text,
+                    images: images.length > 0 ? images : undefined
+                },
+                modelOverride: overrideModel
+            });
 
-            while (iterations < maxIterations) {
-                let fullResponse = '';
-                const metrics = await this._ollamaService.chat(this._chatHistory, (chunk) => {
-                    fullResponse += chunk;
-                    this._view?.webview.postMessage({ command: 'chatResponse', text: chunk });
-                }, overrideModel);
-
-                if (metrics && metrics.aborted) {
-                    this._chatHistory.push({
-                        role: 'assistant',
-                        content: fullResponse + "\n\n*[User physically canceled response generation]*"
-                    });
-                    finalMetrics = metrics;
-                    break;
-                }
-
-                const matches = [...fullResponse.matchAll(/\[READ_FILE:\s*(.*?)\]/g)];
-                if (matches.length > 0) {
-                    let readResults = "";
-                    for (const match of matches) {
-                        const filePath = match[1].trim();
-                        let fileContent = 'Error: File not found or cannot be read.';
-                        try {
-                            const workspaceFolders = vscode.workspace.workspaceFolders;
-                            if (workspaceFolders) {
-                                const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceFolders[0].uri.fsPath, filePath);
-                                if (fs.existsSync(fullPath)) {
-                                    fileContent = fs.readFileSync(fullPath, 'utf8');
-                                }
-                            }
-                        } catch (err) { }
-                        readResults += `\nContents of ${filePath}:\n\`\`\`\n${fileContent}\n\`\`\`\n`;
-                        this._view?.webview.postMessage({ command: 'chatResponse', text: ` [[FILE_READ_CHIP: ${filePath}]] ` });
-                    }
-
-                    this._chatHistory.push({
-                        role: 'assistant',
-                        content: fullResponse
-                    });
-
-                    this._chatHistory.push({
-                        role: 'user',
-                        content: `[System Response] Previously requested files have been successfully retrieved:\n${readResults}\nPlease continue answering my original request using this new code context.`
-                    });
-
-                    this._view?.webview.postMessage({ command: 'showLoading' });
-
-                    iterations++;
-                } else {
-                    this._chatHistory.push({
-                        role: 'assistant',
-                        content: fullResponse
-                    });
-                    finalMetrics = metrics;
-                    break;
-                }
-            }
-
-            this._view?.webview.postMessage({ command: 'chatDone', metrics: finalMetrics });
+            this._chatHistory = result.updatedHistory;
+            this._view?.webview.postMessage({ command: 'chatResponse', text: result.finalResponse });
+            this._view?.webview.postMessage({ command: 'chatDone', metrics: result.metrics });
         } catch (e: any) {
             this._view?.webview.postMessage({ command: 'chatResponse', text: `Error: ${e.message}` });
             this._view?.webview.postMessage({ command: 'chatDone' });
         }
+    }
+
+    private async _buildContextMessage(): Promise<string> {
+        let contextMsg = '';
+
+        const documents = vscode.workspace.textDocuments;
+        if (documents.length > 0) {
+            contextMsg += '<open_files>\n';
+            let budget = 120000;
+            for (const doc of documents) {
+                if (doc.uri.scheme !== 'file' || doc.fileName.includes(path.sep + 'node_modules' + path.sep)) {
+                    continue;
+                }
+
+                const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                const rel = workspaceRoot ? path.relative(workspaceRoot, doc.uri.fsPath).replace(/\\/g, '/') : doc.uri.fsPath;
+                const text = doc.getText();
+                const available = Math.max(0, budget - 500);
+                const snippet = text.slice(0, available);
+                budget -= snippet.length;
+                contextMsg += `<file path="${rel}">\n${snippet}${snippet.length < text.length ? '\n[truncated]' : ''}\n</file>\n`;
+                if (budget <= 0) {
+                    break;
+                }
+            }
+            contextMsg += '</open_files>\n';
+        }
+
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (workspaceFolders) {
+            const tree = await this._getFileTree(workspaceFolders[0].uri);
+            contextMsg += `<file_tree>\n${tree}\n</file_tree>`;
+        }
+
+        return contextMsg;
     }
 
     private async _getFileTree(folderUri: vscode.Uri, depth: number = 2): Promise<string> {
@@ -343,13 +292,11 @@ ${customSystemPrompt ? `\nUSER SPECIFIC INSTRUCTIONS:\n${customSystemPrompt}\n` 
         const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'index.html');
         let htmlContent = fs.readFileSync(htmlPath.fsPath, 'utf8');
 
-        // Replace placeholders with actual URIs
         htmlContent = htmlContent.replace('${scriptUri}', scriptUri.toString());
         htmlContent = htmlContent.replace('${styleUri}', styleUri.toString());
         htmlContent = htmlContent.replace('${logoUri}', logoUri.toString());
         htmlContent = htmlContent.replace('${markedUri}', markedUri.toString());
 
-        // Add CSP
         const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; script-src ${webview.cspSource} 'unsafe-inline'; style-src ${webview.cspSource} 'unsafe-inline';">`;
         htmlContent = htmlContent.replace('<!-- CSP -->', csp);
 

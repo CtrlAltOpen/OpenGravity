@@ -1,9 +1,31 @@
 import * as vscode from 'vscode';
 
+export type ChatMessage = {
+    role: string;
+    content: string;
+    images?: string[];
+    [key: string]: any;
+};
+
+export type ToolDefinition = {
+    type: 'function';
+    function: {
+        name: string;
+        description: string;
+        parameters: Record<string, any>;
+    };
+};
+
+export type ParsedToolCall = {
+    id?: string;
+    name: string;
+    arguments: Record<string, any>;
+};
+
 export class OllamaService {
     private _abortController: AbortController = new AbortController();
 
-    public async chat(messages: { role: string, content: string, images?: string[] }[], onChunk: (text: string) => void, modelOverride?: string): Promise<any> {
+    private _getProviderConfig(modelOverride?: string) {
         const config = vscode.workspace.getConfiguration('opengravity');
         const provider = config.get<string>('provider', 'ollama');
         const url = config.get<string>('url', provider === 'lmstudio' ? 'http://localhost:1234' : 'http://localhost:11434');
@@ -13,52 +35,76 @@ export class OllamaService {
         const numCtx = config.get<number>('contextLength', 8192);
         const topP = config.get<number>('topP', 0.5);
         const topK = config.get<number>('topK', 40);
+        const openAiCompatible = provider === 'lmstudio' || provider === 'llamacpp' || provider === 'openaiCompatible';
 
-        let fullUrl = '';
-        let body: any = {};
+        return { provider, url, model, temp, maxTokens, numCtx, topP, topK, openAiCompatible };
+    }
 
-        if (provider === 'lmstudio') {
-            fullUrl = `${url.replace(/\/$/, '')}/v1/chat/completions`;
-            body = {
-                model: model,
-                messages: messages,
-                stream: true,
+    private _buildChatRequest(messages: ChatMessage[], modelOverride: string | undefined, stream: boolean, tools?: ToolDefinition[]) {
+        const { url, model, temp, maxTokens, numCtx, topP, topK, openAiCompatible } = this._getProviderConfig(modelOverride);
+
+        if (openAiCompatible) {
+            const body: any = {
+                model,
+                messages,
+                stream,
                 temperature: temp,
                 top_p: topP
             };
             if (maxTokens !== -1) {
                 body.max_tokens = maxTokens;
             }
-        } else {
-            fullUrl = `${url.replace(/\/$/, '')}/api/chat`;
-            body = {
-                model: model,
-                messages: messages,
-                stream: true,
-                options: {
-                    temperature: temp,
-                    num_ctx: numCtx,
-                    top_p: topP,
-                    top_k: topK
-                }
-            };
-            if (maxTokens !== -1) {
-                body.options.num_predict = maxTokens;
+            if (tools && tools.length > 0) {
+                body.tools = tools;
+                body.tool_choice = 'auto';
             }
+            return {
+                fullUrl: `${url.replace(/\/$/, '')}/v1/chat/completions`,
+                body,
+                openAiCompatible
+            };
         }
 
+        const body: any = {
+            model,
+            messages,
+            stream,
+            options: {
+                temperature: temp,
+                num_ctx: numCtx,
+                top_p: topP,
+                top_k: topK
+            }
+        };
+        if (maxTokens !== -1) {
+            body.options.num_predict = maxTokens;
+        }
+        if (tools && tools.length > 0) {
+            body.tools = tools;
+        }
+
+        return {
+            fullUrl: `${url.replace(/\/$/, '')}/api/chat`,
+            body,
+            openAiCompatible
+        };
+    }
+
+    public async chat(messages: ChatMessage[], onChunk: (text: string) => void, modelOverride?: string): Promise<any> {
+        const request = this._buildChatRequest(messages, modelOverride, true);
+
         try {
-            const response = await fetch(fullUrl, {
+            const response = await fetch(request.fullUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(body),
+                body: JSON.stringify(request.body),
                 signal: this._abortController.signal
             });
 
             if (!response.ok) {
-                throw new Error(`Ollama API Error: ${response.status} ${response.statusText}`);
+                throw new Error(`Local API Error: ${response.status} ${response.statusText}`);
             }
 
             if (!response.body) {
@@ -78,7 +124,7 @@ export class OllamaService {
                 for (const line of lines) {
                     if (!line.trim()) continue;
 
-                    if (provider === 'lmstudio') {
+                    if (request.openAiCompatible) {
                         if (line.includes('[DONE]')) {
                             return { done: true };
                         }
@@ -88,12 +134,13 @@ export class OllamaService {
                                 if (json.choices && json.choices[0].delta && json.choices[0].delta.content) {
                                     onChunk(json.choices[0].delta.content);
                                 }
-                            } catch (e) { }
+                            } catch {
+                                // Ignore malformed chunks while streaming.
+                            }
                         }
                     } else {
                         try {
                             const json = JSON.parse(line);
-                            // Ollama 'chat' endpoint returns 'message' object
                             if (json.message && json.message.content) {
                                 onChunk(json.message.content);
                             }
@@ -103,13 +150,13 @@ export class OllamaService {
                             if (json.error) {
                                 throw new Error(json.error);
                             }
-                        } catch (e) {
-                            // console.error('Error parsing JSON chunk', e);
+                        } catch {
+                            // Ignore malformed chunks while streaming.
                         }
                     }
                 }
             }
-            if (provider === 'lmstudio') return { done: true };
+            if (request.openAiCompatible) return { done: true };
             return null;
         } catch (error: any) {
             if (error.name === 'AbortError') {
@@ -121,14 +168,101 @@ export class OllamaService {
         }
     }
 
+    public async complete(
+        messages: ChatMessage[],
+        modelOverride?: string,
+        tools?: ToolDefinition[]
+    ): Promise<{ text: string; raw?: any; aborted?: boolean; assistantMessage?: ChatMessage; toolCalls?: ParsedToolCall[] }> {
+        const request = this._buildChatRequest(messages, modelOverride, false, tools);
+
+        try {
+            const response = await fetch(request.fullUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request.body),
+                signal: this._abortController.signal
+            });
+
+            if (!response.ok) {
+                throw new Error(`Local API Error: ${response.status} ${response.statusText}`);
+            }
+
+            const json: any = await response.json();
+            if (request.openAiCompatible) {
+                const message = json.choices?.[0]?.message || {};
+                return {
+                    text: message.content || '',
+                    toolCalls: this._extractToolCalls(message.tool_calls),
+                    assistantMessage: {
+                        role: message.role || 'assistant',
+                        content: message.content || '',
+                        tool_calls: message.tool_calls
+                    },
+                    raw: json
+                };
+            }
+
+            const message = json.message || {};
+            return {
+                text: message.content || '',
+                toolCalls: this._extractToolCalls(message.tool_calls),
+                assistantMessage: {
+                    role: message.role || 'assistant',
+                    content: message.content || '',
+                    tool_calls: message.tool_calls
+                },
+                raw: json
+            };
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                return { text: '', aborted: true };
+            }
+            throw error;
+        }
+    }
+
+    private _extractToolCalls(rawCalls: any): ParsedToolCall[] {
+        if (!Array.isArray(rawCalls)) {
+            return [];
+        }
+
+        const calls: ParsedToolCall[] = [];
+        for (const call of rawCalls) {
+            const fn = call?.function;
+            if (!fn?.name) {
+                continue;
+            }
+
+            let parsedArgs: Record<string, any> = {};
+            if (typeof fn.arguments === 'string') {
+                try {
+                    parsedArgs = JSON.parse(fn.arguments);
+                } catch {
+                    parsedArgs = {};
+                }
+            } else if (typeof fn.arguments === 'object' && fn.arguments) {
+                parsedArgs = fn.arguments;
+            }
+
+            calls.push({
+                id: typeof call.id === 'string' ? call.id : undefined,
+                name: String(fn.name),
+                arguments: parsedArgs
+            });
+        }
+
+        return calls;
+    }
+
     public async generate(prompt: string): Promise<string> {
         const config = vscode.workspace.getConfiguration('opengravity');
         const provider = config.get<string>('provider', 'ollama');
         const url = config.get<string>('url', provider === 'lmstudio' ? 'http://localhost:1234' : 'http://localhost:11434');
         const model = config.get<string>('model', 'llama3');
         const temp = config.get<number>('temperature', 0.2);
+        const openAiCompatible = provider === 'lmstudio' || provider === 'llamacpp' || provider === 'openaiCompatible';
 
-        if (provider === 'lmstudio') {
+        if (openAiCompatible) {
             const fullUrl = `${url.replace(/\/$/, '')}/v1/chat/completions`;
             const body = {
                 model: model,
@@ -146,7 +280,9 @@ export class OllamaService {
                 if (!response.ok) return '';
                 const json: any = await response.json();
                 return json.choices?.[0]?.message?.content || '';
-            } catch (e) { return ''; }
+            } catch {
+                return '';
+            }
         }
 
         const fullUrl = `${url.replace(/\/$/, '')}/api/generate`;
@@ -157,7 +293,7 @@ export class OllamaService {
             stream: false,
             options: {
                 temperature: temp,
-                num_predict: 50 // Short generation for autocomplete
+                num_predict: 50
             }
         };
 
@@ -184,8 +320,9 @@ export class OllamaService {
         const config = vscode.workspace.getConfiguration('opengravity');
         const provider = config.get<string>('provider', 'ollama');
         const url = config.get<string>('url', provider === 'lmstudio' ? 'http://localhost:1234' : 'http://localhost:11434');
+        const openAiCompatible = provider === 'lmstudio' || provider === 'llamacpp' || provider === 'openaiCompatible';
 
-        const fullUrl = provider === 'lmstudio'
+        const fullUrl = openAiCompatible
             ? `${url.replace(/\/$/, '')}/v1/models`
             : `${url.replace(/\/$/, '')}/api/tags`;
 
@@ -195,10 +332,10 @@ export class OllamaService {
                 return [];
             }
             const json: any = await response.json();
-            if (provider === 'lmstudio') {
-                return json.data.map((m: any) => m.id);
+            if (openAiCompatible) {
+                return (json.data || []).map((m: any) => m.id);
             }
-            return json.models.map((m: any) => m.name);
+            return (json.models || []).map((m: any) => m.name);
         } catch (e) {
             console.error('GetModels Error:', e);
             return [];
@@ -210,7 +347,7 @@ export class OllamaService {
         const provider = config.get<string>('provider', 'ollama');
         const url = config.get<string>('url', provider === 'lmstudio' ? 'http://localhost:1234' : 'http://localhost:11434');
 
-        if (provider === 'lmstudio') {
+        if (provider !== 'ollama') {
             return [];
         }
 

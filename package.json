@@ -54,10 +54,12 @@
           "type": "string",
           "enum": [
             "ollama",
-            "lmstudio"
+            "lmstudio",
+            "llamacpp",
+            "openaiCompatible"
           ],
           "default": "ollama",
-          "description": "AI API Provider (Ollama or LM Studio)"
+          "description": "AI API Provider (Ollama, LM Studio, llama.cpp server, or generic OpenAI-compatible local endpoint)"
         },
         "opengravity.url": {
           "type": "string",
@@ -103,6 +105,36 @@
           "type": "boolean",
           "default": true,
           "description": "Enable inline ghost text autocomplete"
+        },
+        "opengravity.agentMaxSteps": {
+          "type": "integer",
+          "default": 8,
+          "description": "Maximum tool-iteration steps per chat request"
+        },
+        "opengravity.maxReadFileBytes": {
+          "type": "integer",
+          "default": 150000,
+          "description": "Maximum file bytes the read_file tool returns in one call"
+        },
+        "opengravity.enableTerminalTool": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow the agent to run terminal commands in the workspace root"
+        },
+        "opengravity.terminalCommandTimeoutMs": {
+          "type": "integer",
+          "default": 20000,
+          "description": "Timeout for run_terminal_command tool in milliseconds"
+        },
+        "opengravity.includeHiddenFilesInList": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include dotfiles in list_files tool output"
+        },
+        "opengravity.enableNativeToolCalling": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable native function-calling when the selected local provider/model supports it"
         }
       }
     }

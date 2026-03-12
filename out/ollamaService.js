@@ -6,7 +6,7 @@ class OllamaService {
     constructor() {
         this._abortController = new AbortController();
     }
-    async chat(messages, onChunk, modelOverride) {
+    _getProviderConfig(modelOverride) {
         const config = vscode.workspace.getConfiguration('opengravity');
         const provider = config.get('provider', 'ollama');
         const url = config.get('url', provider === 'lmstudio' ? 'http://localhost:1234' : 'http://localhost:11434');
@@ -16,49 +16,68 @@ class OllamaService {
         const numCtx = config.get('contextLength', 8192);
         const topP = config.get('topP', 0.5);
         const topK = config.get('topK', 40);
-        let fullUrl = '';
-        let body = {};
-        if (provider === 'lmstudio') {
-            fullUrl = `${url.replace(/\/$/, '')}/v1/chat/completions`;
-            body = {
-                model: model,
-                messages: messages,
-                stream: true,
+        const openAiCompatible = provider === 'lmstudio' || provider === 'llamacpp' || provider === 'openaiCompatible';
+        return { provider, url, model, temp, maxTokens, numCtx, topP, topK, openAiCompatible };
+    }
+    _buildChatRequest(messages, modelOverride, stream, tools) {
+        const { url, model, temp, maxTokens, numCtx, topP, topK, openAiCompatible } = this._getProviderConfig(modelOverride);
+        if (openAiCompatible) {
+            const body = {
+                model,
+                messages,
+                stream,
                 temperature: temp,
                 top_p: topP
             };
             if (maxTokens !== -1) {
                 body.max_tokens = maxTokens;
             }
-        }
-        else {
-            fullUrl = `${url.replace(/\/$/, '')}/api/chat`;
-            body = {
-                model: model,
-                messages: messages,
-                stream: true,
-                options: {
-                    temperature: temp,
-                    num_ctx: numCtx,
-                    top_p: topP,
-                    top_k: topK
-                }
-            };
-            if (maxTokens !== -1) {
-                body.options.num_predict = maxTokens;
+            if (tools && tools.length > 0) {
+                body.tools = tools;
+                body.tool_choice = 'auto';
             }
+            return {
+                fullUrl: `${url.replace(/\/$/, '')}/v1/chat/completions`,
+                body,
+                openAiCompatible
+            };
         }
+        const body = {
+            model,
+            messages,
+            stream,
+            options: {
+                temperature: temp,
+                num_ctx: numCtx,
+                top_p: topP,
+                top_k: topK
+            }
+        };
+        if (maxTokens !== -1) {
+            body.options.num_predict = maxTokens;
+        }
+        if (tools && tools.length > 0) {
+            body.tools = tools;
+        }
+        return {
+            fullUrl: `${url.replace(/\/$/, '')}/api/chat`,
+            body,
+            openAiCompatible
+        };
+    }
+    async chat(messages, onChunk, modelOverride) {
+        const request = this._buildChatRequest(messages, modelOverride, true);
         try {
-            const response = await fetch(fullUrl, {
+            const response = await fetch(request.fullUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(body),
+                body: JSON.stringify(request.body),
                 signal: this._abortController.signal
             });
             if (!response.ok) {
-                throw new Error(`Ollama API Error: ${response.status} ${response.statusText}`);
+                throw new Error(`Local API Error: ${response.status} ${response.statusText}`);
             }
             if (!response.body) {
                 throw new Error('No response body');
@@ -74,7 +93,7 @@ class OllamaService {
                 for (const line of lines) {
                     if (!line.trim())
                         continue;
-                    if (provider === 'lmstudio') {
+                    if (request.openAiCompatible) {
                         if (line.includes('[DONE]')) {
                             return { done: true };
                         }
@@ -85,13 +104,14 @@ class OllamaService {
                                     onChunk(json.choices[0].delta.content);
                                 }
                             }
-                            catch (e) { }
+                            catch {
+                                // Ignore malformed chunks while streaming.
+                            }
                         }
                     }
                     else {
                         try {
                             const json = JSON.parse(line);
-                            // Ollama 'chat' endpoint returns 'message' object
                             if (json.message && json.message.content) {
                                 onChunk(json.message.content);
                             }
@@ -102,13 +122,13 @@ class OllamaService {
                                 throw new Error(json.error);
                             }
                         }
-                        catch (e) {
-                            // console.error('Error parsing JSON chunk', e);
+                        catch {
+                            // Ignore malformed chunks while streaming.
                         }
                     }
                 }
             }
-            if (provider === 'lmstudio')
+            if (request.openAiCompatible)
                 return { done: true };
             return null;
         }
@@ -121,13 +141,89 @@ class OllamaService {
             return null;
         }
     }
+    async complete(messages, modelOverride, tools) {
+        const request = this._buildChatRequest(messages, modelOverride, false, tools);
+        try {
+            const response = await fetch(request.fullUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request.body),
+                signal: this._abortController.signal
+            });
+            if (!response.ok) {
+                throw new Error(`Local API Error: ${response.status} ${response.statusText}`);
+            }
+            const json = await response.json();
+            if (request.openAiCompatible) {
+                const message = json.choices?.[0]?.message || {};
+                return {
+                    text: message.content || '',
+                    toolCalls: this._extractToolCalls(message.tool_calls),
+                    assistantMessage: {
+                        role: message.role || 'assistant',
+                        content: message.content || '',
+                        tool_calls: message.tool_calls
+                    },
+                    raw: json
+                };
+            }
+            const message = json.message || {};
+            return {
+                text: message.content || '',
+                toolCalls: this._extractToolCalls(message.tool_calls),
+                assistantMessage: {
+                    role: message.role || 'assistant',
+                    content: message.content || '',
+                    tool_calls: message.tool_calls
+                },
+                raw: json
+            };
+        }
+        catch (error) {
+            if (error.name === 'AbortError') {
+                return { text: '', aborted: true };
+            }
+            throw error;
+        }
+    }
+    _extractToolCalls(rawCalls) {
+        if (!Array.isArray(rawCalls)) {
+            return [];
+        }
+        const calls = [];
+        for (const call of rawCalls) {
+            const fn = call?.function;
+            if (!fn?.name) {
+                continue;
+            }
+            let parsedArgs = {};
+            if (typeof fn.arguments === 'string') {
+                try {
+                    parsedArgs = JSON.parse(fn.arguments);
+                }
+                catch {
+                    parsedArgs = {};
+                }
+            }
+            else if (typeof fn.arguments === 'object' && fn.arguments) {
+                parsedArgs = fn.arguments;
+            }
+            calls.push({
+                id: typeof call.id === 'string' ? call.id : undefined,
+                name: String(fn.name),
+                arguments: parsedArgs
+            });
+        }
+        return calls;
+    }
     async generate(prompt) {
         const config = vscode.workspace.getConfiguration('opengravity');
         const provider = config.get('provider', 'ollama');
         const url = config.get('url', provider === 'lmstudio' ? 'http://localhost:1234' : 'http://localhost:11434');
         const model = config.get('model', 'llama3');
         const temp = config.get('temperature', 0.2);
-        if (provider === 'lmstudio') {
+        const openAiCompatible = provider === 'lmstudio' || provider === 'llamacpp' || provider === 'openaiCompatible';
+        if (openAiCompatible) {
             const fullUrl = `${url.replace(/\/$/, '')}/v1/chat/completions`;
             const body = {
                 model: model,
@@ -147,7 +243,7 @@ class OllamaService {
                 const json = await response.json();
                 return json.choices?.[0]?.message?.content || '';
             }
-            catch (e) {
+            catch {
                 return '';
             }
         }
@@ -158,7 +254,7 @@ class OllamaService {
             stream: false,
             options: {
                 temperature: temp,
-                num_predict: 50 // Short generation for autocomplete
+                num_predict: 50
             }
         };
         try {
@@ -182,7 +278,8 @@ class OllamaService {
         const config = vscode.workspace.getConfiguration('opengravity');
         const provider = config.get('provider', 'ollama');
         const url = config.get('url', provider === 'lmstudio' ? 'http://localhost:1234' : 'http://localhost:11434');
-        const fullUrl = provider === 'lmstudio'
+        const openAiCompatible = provider === 'lmstudio' || provider === 'llamacpp' || provider === 'openaiCompatible';
+        const fullUrl = openAiCompatible
             ? `${url.replace(/\/$/, '')}/v1/models`
             : `${url.replace(/\/$/, '')}/api/tags`;
         try {
@@ -191,10 +288,10 @@ class OllamaService {
                 return [];
             }
             const json = await response.json();
-            if (provider === 'lmstudio') {
-                return json.data.map((m) => m.id);
+            if (openAiCompatible) {
+                return (json.data || []).map((m) => m.id);
             }
-            return json.models.map((m) => m.name);
+            return (json.models || []).map((m) => m.name);
         }
         catch (e) {
             console.error('GetModels Error:', e);
@@ -205,7 +302,7 @@ class OllamaService {
         const config = vscode.workspace.getConfiguration('opengravity');
         const provider = config.get('provider', 'ollama');
         const url = config.get('url', provider === 'lmstudio' ? 'http://localhost:1234' : 'http://localhost:11434');
-        if (provider === 'lmstudio') {
+        if (provider !== 'ollama') {
             return [];
         }
         const fullUrl = `${url.replace(/\/$/, '')}/api/ps`;
