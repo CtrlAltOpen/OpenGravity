@@ -86,6 +86,107 @@ class OllamaService {
         const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
         return `${cleanBase}${cleanEndpoint}`;
     }
+    _isRecord(value) {
+        return typeof value === 'object' && value !== null && !Array.isArray(value);
+    }
+    _stringArray(value) {
+        if (!Array.isArray(value)) {
+            return [];
+        }
+        return value.map((item) => typeof item === 'string' ? item : '').filter(Boolean);
+    }
+    _detectCapabilitiesFromMetadata(rawModel, modelId) {
+        const caps = new Set();
+        const model = this._isRecord(rawModel) ? rawModel : {};
+        const details = this._isRecord(model.details) ? model.details : {};
+        const architecture = this._isRecord(model.architecture) ? model.architecture : {};
+        const metadata = this._isRecord(model.metadata) ? model.metadata : {};
+        const capabilityObj = this._isRecord(model.capabilities) ? model.capabilities : {};
+        const arrays = [
+            ...this._stringArray(model.modalities),
+            ...this._stringArray(model.input_modalities),
+            ...this._stringArray(model.output_modalities),
+            ...this._stringArray(model.supported_modalities),
+            ...this._stringArray(details.families),
+            ...this._stringArray(metadata.modalities),
+            ...this._stringArray(architecture.modalities)
+        ];
+        const rawText = [
+            modelId,
+            typeof model.id === 'string' ? model.id : '',
+            typeof model.name === 'string' ? model.name : '',
+            typeof model.object === 'string' ? model.object : '',
+            typeof details.family === 'string' ? details.family : '',
+            typeof architecture.type === 'string' ? architecture.type : '',
+            ...arrays
+        ].join(' ').toLowerCase();
+        if (/(image|vision|llava|vl|pixtral|moondream|clip)/.test(rawText)) {
+            caps.add('vision');
+        }
+        if (/(coder|code|starcoder|codestral|deepseek-coder|qwen2\.5-coder)/.test(rawText)) {
+            caps.add('code');
+        }
+        const toolsExplicit = model.supports_tools === true
+            || model.tool_calling === true
+            || model.function_calling === true
+            || model.tools === true
+            || capabilityObj.tools === true
+            || capabilityObj.function_calling === true
+            || capabilityObj.tool_calling === true;
+        if (toolsExplicit) {
+            caps.add('tools');
+        }
+        const thinkingExplicit = model.reasoning === true
+            || model.supports_reasoning === true
+            || capabilityObj.reasoning === true
+            || capabilityObj.thinking === true
+            || capabilityObj.reasoner === true;
+        if (thinkingExplicit) {
+            caps.add('thinking');
+        }
+        const filesExplicit = model.supports_files === true
+            || capabilityObj.files === true
+            || capabilityObj.attachments === true;
+        if (filesExplicit) {
+            caps.add('files');
+        }
+        return Array.from(caps);
+    }
+    _extractModelInfosFromPayload(payload, provider) {
+        const root = this._isRecord(payload) ? payload : {};
+        const fromModels = Array.isArray(root.models) ? root.models : [];
+        const fromData = Array.isArray(root.data) ? root.data : [];
+        const modelEntries = [...fromModels, ...fromData];
+        const infos = [];
+        for (const entry of modelEntries) {
+            const item = this._isRecord(entry) ? entry : {};
+            const id = typeof item.id === 'string'
+                ? item.id
+                : (typeof item.name === 'string' ? item.name : '');
+            if (!id) {
+                continue;
+            }
+            infos.push({
+                id,
+                provider,
+                capabilities: this._detectCapabilitiesFromMetadata(item, id),
+                raw: item
+            });
+        }
+        if (infos.length > 0) {
+            return infos;
+        }
+        if (typeof root.model_path === 'string' && root.model_path) {
+            const id = path.basename(root.model_path);
+            return [{
+                    id,
+                    provider,
+                    capabilities: this._detectCapabilitiesFromMetadata(root, id),
+                    raw: root
+                }];
+        }
+        return [];
+    }
     _messagesToPrompt(messages) {
         const lines = [];
         for (const message of messages) {
@@ -497,7 +598,7 @@ class OllamaService {
             error: 'Could not reach a valid endpoint for the selected provider.'
         };
     }
-    async getModels() {
+    async getModelInfos() {
         const cfg = this._getProviderConfig();
         try {
             if (cfg.kind === 'openaiCompat') {
@@ -510,9 +611,9 @@ class OllamaService {
                         continue;
                     }
                     const json = await response.json();
-                    const models = (json.data || json.models || []).map((m) => m.id || m.name).filter(Boolean);
-                    if (models.length > 0) {
-                        return models;
+                    const infos = this._extractModelInfosFromPayload(json, cfg.provider);
+                    if (infos.length > 0) {
+                        return infos;
                     }
                 }
                 return [];
@@ -526,18 +627,9 @@ class OllamaService {
                             continue;
                         }
                         const json = await response.json();
-                        if (Array.isArray(json.models)) {
-                            const models = json.models.map((m) => m.id || m.name).filter(Boolean);
-                            if (models.length > 0)
-                                return models;
-                        }
-                        if (Array.isArray(json.data)) {
-                            const models = json.data.map((m) => m.id || m.name).filter(Boolean);
-                            if (models.length > 0)
-                                return models;
-                        }
-                        if (typeof json.model_path === 'string' && json.model_path) {
-                            return [path.basename(json.model_path)];
+                        const infos = this._extractModelInfosFromPayload(json, cfg.provider);
+                        if (infos.length > 0) {
+                            return infos;
                         }
                     }
                     catch {
@@ -551,12 +643,16 @@ class OllamaService {
                 return [];
             }
             const json = await response.json();
-            return (json.models || []).map((m) => m.name).filter(Boolean);
+            return this._extractModelInfosFromPayload(json, cfg.provider);
         }
         catch (e) {
-            console.error('GetModels Error:', e);
+            console.error('GetModelInfos Error:', e);
             return [];
         }
+    }
+    async getModels() {
+        const infos = await this.getModelInfos();
+        return infos.map((m) => m.id);
     }
     async getActiveModels() {
         const cfg = this._getProviderConfig();

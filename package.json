@@ -303,6 +303,27 @@
             "Balanced reasoning depth and speed.",
             "Deepest reasoning with extra validation."
           ]
+        },
+        "opengravity.chatMode": {
+          "type": "string",
+          "enum": [
+            "execute",
+            "plan",
+            "review"
+          ],
+          "default": "execute",
+          "description": "Chat behavior mode: execute changes, plan architecture, or review risks.",
+          "order": 34,
+          "enumItemLabels": [
+            "Execute",
+            "Plan",
+            "Review"
+          ],
+          "enumDescriptions": [
+            "Generate direct implementation guidance and code.",
+            "Focus on planning and architecture before coding.",
+            "Focus on critique, bugs, and risk analysis."
+          ]
         }
       }
     }

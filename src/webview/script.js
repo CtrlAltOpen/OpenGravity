@@ -6,6 +6,10 @@ const sendBtn = document.getElementById('send-btn');
 const imagePreview = document.getElementById('image-preview');
 const modelSelect = document.getElementById('model-select');
 const thinkingSelect = document.getElementById('thinking-select');
+const modeSelect = document.getElementById('mode-select');
+const attachBtn = document.getElementById('attach-btn');
+const fileInput = document.getElementById('file-input');
+const modelCapabilities = document.getElementById('model-capabilities');
 
 let images = [];
 let currentAssistantMessageDiv = null;
@@ -14,6 +18,9 @@ let currentModel = '';
 let currentActiveModels = [];
 let isGenerating = false;
 let currentThinkingLevel = 'medium';
+let currentChatMode = 'execute';
+let attachedFiles = [];
+let currentModelInfoMap = {}; 
 
 // Initialize
 window.addEventListener('load', () => {
@@ -64,7 +71,7 @@ window.addEventListener('message', event => {
             currentAssistantMessageContent = '';
             break;
         case 'modelsList':
-            populateModels(message.models);
+            populateModels(message.models, message.modelInfos || []);
             break;
         case 'settings':
             if (message.model) {
@@ -73,27 +80,77 @@ window.addEventListener('message', event => {
                 if (modelSelect.options.length > 1) {
                     modelSelect.value = currentModel;
                 }
+                renderModelCapabilities();
             }
             if (message.thinkingLevel && thinkingSelect) {
                 currentThinkingLevel = message.thinkingLevel;
                 thinkingSelect.value = currentThinkingLevel;
             }
+            if (message.chatMode && modeSelect) {
+                currentChatMode = message.chatMode;
+                modeSelect.value = currentChatMode;
+            }
             break;
         case 'updateActiveModels':
             currentActiveModels = message.activeModels || [];
             updateMemoryDisplay();
+            renderModelCapabilities();
             break;
     }
 });
+function normalizeCapabilityLabel(capability) {
+    const key = String(capability || '').toLowerCase();
+    if (key === 'thinking') return 'THINKING';
+    if (key === 'vision') return 'VISION';
+    if (key === 'tools') return 'TOOLS';
+    if (key === 'files') return 'FILES';
+    if (key === 'code') return 'CODE';
+    return '';
+}
 
-function populateModels(models) {
+function getCapabilitiesForCurrentModel() {
+    const info = currentModelInfoMap[currentModel];
+    if (info && Array.isArray(info.capabilities)) {
+        const fromProvider = Array.from(new Set(info.capabilities
+            .map(normalizeCapabilityLabel)
+            .filter(Boolean))); 
+        if (fromProvider.length > 0) {
+            return fromProvider;
+        }
+    }
+
+    return [];
+}
+
+function renderModelCapabilities() {
+    if (!modelCapabilities) return;
+
+    modelCapabilities.innerHTML = '';
+    const caps = getCapabilitiesForCurrentModel();
+    if (!currentModel || caps.length === 0) return;
+
+    caps.forEach(cap => {
+        const chip = document.createElement('span');
+        chip.className = 'capability-chip';
+        chip.innerText = cap;
+        modelCapabilities.appendChild(chip);
+    });
+}
+function populateModels(models, modelInfos = []) {
     modelSelect.innerHTML = '';
+    currentModelInfoMap = {};
+    modelInfos.forEach(info => {
+        if (info && info.id) {
+            currentModelInfoMap[info.id] = info;
+        }
+    });
 
     if (models.length === 0) {
         const option = document.createElement('option');
         option.text = "No models found";
         modelSelect.add(option);
         updateMemoryDisplay();
+        renderModelCapabilities();
         return;
     }
 
@@ -106,9 +163,13 @@ function populateModels(models) {
 
     if (currentModel) {
         modelSelect.value = currentModel;
+    } else if (models.length > 0) {
+        currentModel = models[0];
+        modelSelect.value = currentModel;
     }
 
     updateMemoryDisplay();
+    renderModelCapabilities();
 }
 
 function updateMemoryDisplay() {
@@ -132,12 +193,20 @@ function updateMemoryDisplay() {
 modelSelect.addEventListener('change', () => {
     currentModel = modelSelect.value;
     vscode.postMessage({ command: 'setModel', model: currentModel });
+    renderModelCapabilities();
 });
 
 if (thinkingSelect) {
     thinkingSelect.addEventListener('change', () => {
         currentThinkingLevel = thinkingSelect.value;
         vscode.postMessage({ command: 'setThinkingLevel', thinkingLevel: currentThinkingLevel });
+    });
+}
+
+if (modeSelect) {
+    modeSelect.addEventListener('change', () => {
+        currentChatMode = modeSelect.value;
+        vscode.postMessage({ command: 'setChatMode', chatMode: currentChatMode });
     });
 }
 
@@ -152,17 +221,29 @@ function sendMessage() {
     }
 
     const text = input.value.trim();
-    if (!text && images.length === 0) return;
+    if (!text && images.length === 0 && attachedFiles.length === 0) return;
 
     addMessage(text, 'user', images);
     addLoadingIndicator();
     setGeneratingState(true);
-    vscode.postMessage({ command: 'chat', text: text, images: images, model: currentModel, thinkingLevel: currentThinkingLevel });
+    vscode.postMessage({
+        command: 'chat',
+        text: text,
+        images: images,
+        attachments: attachedFiles,
+        model: currentModel,
+        thinkingLevel: currentThinkingLevel,
+        mode: currentChatMode
+    });
 
     input.value = '';
     input.style.height = 'auto'; // Reset height
     images = [];
+    attachedFiles = [];
     imagePreview.innerHTML = '';
+    if (fileInput) {
+        fileInput.value = '';
+    }
 }
 
 function setGeneratingState(generating) {
@@ -269,6 +350,71 @@ window.addEventListener('paste', async (e) => {
     }
 });
 
+
+if (attachBtn && fileInput) {
+    attachBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async (e) => {
+        const files = Array.from(e.target.files || []);
+        await processSelectedFiles(files);
+        fileInput.value = '';
+    });
+}
+
+async function processSelectedFiles(files) {
+    for (const file of files) {
+        if (file.type.startsWith('image/')) {
+            const dataUrl = await readFileAsDataURL(file);
+            const b64 = dataUrl.split(',')[1] || '';
+            if (b64) {
+                images.push(b64);
+                const img = document.createElement('img');
+                img.src = dataUrl;
+                img.className = 'preview-thumb';
+                imagePreview.appendChild(img);
+            }
+            continue;
+        }
+
+        const maxTextSize = 256 * 1024;
+        if (file.size > maxTextSize) {
+            const chip = document.createElement('span');
+            chip.className = 'file-chip';
+            chip.innerHTML = `<code>${file.name} (too large)</code>`;
+            imagePreview.appendChild(chip);
+            continue;
+        }
+
+        const text = await readFileAsText(file);
+        attachedFiles.push({
+            name: file.name,
+            mimeType: file.type || 'text/plain',
+            content: text
+        });
+
+        const chip = document.createElement('span');
+        chip.className = 'file-chip';
+        chip.innerHTML = `<code>${file.name}</code>`;
+        imagePreview.appendChild(chip);
+    }
+}
+
+function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => resolve(event.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => resolve(String(event.target.result || ''));
+        reader.onerror = reject;
+        reader.readAsText(file);
+    });
+}
 
 // Auto-resize textarea
 input.addEventListener('input', function () {
@@ -530,7 +676,9 @@ window.approvePlan = function (btn) {
         text: text,
         images: [],
         model: currentModel,
-        thinkingLevel: currentThinkingLevel
+        thinkingLevel: currentThinkingLevel,
+        mode: currentChatMode,
+        attachments: []
     });
 
     // Visual feedback
@@ -538,6 +686,27 @@ window.approvePlan = function (btn) {
     btn.style.backgroundColor = "#2ea043"; // Success green
     btn.disabled = true;
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

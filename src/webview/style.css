@@ -380,6 +380,9 @@ pre code {
 
 .title {
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
 }
 
 #model-select {
@@ -394,6 +397,7 @@ pre code {
     width: min(46vw, 340px);
     max-width: 100%;
     min-width: 140px;
+    flex: 0 1 340px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -418,4 +422,55 @@ pre code {
 
 
 
+
+
+#attach-btn {
+    background-color: #333;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    height: 26px;
+}
+
+#attach-btn:hover {
+    background-color: #3a3a3a;
+}
+
+#mode-select {
+    background-color: #333;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    outline: none;
+    cursor: pointer;
+    width: 126px;
+    min-width: 116px;
+    max-width: 145px;
+    flex: 0 0 auto;
+}
+
+#model-capabilities {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    max-width: 210px;
+    overflow: hidden;
+}
+
+.capability-chip {
+    font-size: 10px;
+    line-height: 1;
+    color: #c8d6e5;
+    background: rgba(125, 156, 196, 0.16);
+    border: 1px solid rgba(125, 156, 196, 0.35);
+    border-radius: 999px;
+    padding: 3px 6px;
+    white-space: nowrap;
+}
 

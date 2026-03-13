@@ -226,16 +226,17 @@ class OllamaViewProvider {
         webviewView.webview.onDidReceiveMessage(async (message) => {
             switch (message.command) {
                 case 'chat':
-                    await this._handleChat(message.text, message.images || [], message.model, message.thinkingLevel);
+                    await this._handleChat(message.text, message.images || [], message.model, message.thinkingLevel, message.mode, message.attachments || []);
                     break;
                 case 'applyCode':
                     vscode.commands.executeCommand('opengravity.applyCode', message.changes || message.text);
                     break;
                 case 'getModels':
                     {
-                        const models = await this._ollamaService.getModels();
+                        const modelInfos = await this._ollamaService.getModelInfos();
+                        const models = modelInfos.map((m) => m.id);
                         const activeModels = await this._ollamaService.getActiveModels();
-                        this._view?.webview.postMessage({ command: 'modelsList', models: models, activeModels: activeModels });
+                        this._view?.webview.postMessage({ command: 'modelsList', models: models, modelInfos: modelInfos, activeModels: activeModels });
                     }
                     break;
                 case 'setModel':
@@ -251,12 +252,16 @@ class OllamaViewProvider {
                         this._view?.webview.postMessage({
                             command: 'settings',
                             model: config.get('model', 'qwen2.5-coder:7b'),
-                            thinkingLevel: config.get('thinkingLevel', 'medium')
+                            thinkingLevel: config.get('thinkingLevel', 'medium'),
+                            chatMode: config.get('chatMode', 'execute')
                         });
                     }
                     break;
                 case 'setThinkingLevel':
                     await vscode.workspace.getConfiguration('opengravity').update('thinkingLevel', message.thinkingLevel || 'medium', vscode.ConfigurationTarget.Global);
+                    break;
+                case 'setChatMode':
+                    await vscode.workspace.getConfiguration('opengravity').update('chatMode', message.chatMode || 'execute', vscode.ConfigurationTarget.Global);
                     break;
                 case 'cancelChat':
                     this._ollamaService.cancelChat();
@@ -264,13 +269,15 @@ class OllamaViewProvider {
             }
         });
     }
-    async _handleChat(text, images, overrideModel, thinkingLevel) {
+    async _handleChat(text, images, overrideModel, thinkingLevel, chatMode, attachments = []) {
         try {
             const contextMsg = await this._buildContextMessage();
             const config = vscode.workspace.getConfiguration('opengravity');
             const customSystemPrompt = config.get('systemPrompt', '');
             const selectedThinking = (thinkingLevel || config.get('thinkingLevel', 'medium') || 'medium').toLowerCase();
+            const selectedMode = (chatMode || config.get('chatMode', 'execute') || 'execute').toLowerCase();
             let thinkingInstruction = 'Thinking level is MEDIUM: balance depth and speed for reliable coding changes.';
+            let modeInstruction = 'Mode is EXECUTE: you may provide direct implementation guidance and code changes.';
             if (selectedThinking === 'off') {
                 thinkingInstruction = 'Thinking level is OFF: respond quickly with minimal deliberation while staying correct.';
             }
@@ -280,6 +287,12 @@ class OllamaViewProvider {
             else if (selectedThinking === 'high') {
                 thinkingInstruction = 'Thinking level is HIGH: spend extra effort validating assumptions, edge cases, and correctness.';
             }
+            if (selectedMode === 'plan') {
+                modeInstruction = 'Mode is PLAN: provide an implementation plan and architecture only. Do not output final code unless the user asks to execute.';
+            }
+            else if (selectedMode === 'review') {
+                modeInstruction = 'Mode is REVIEW: prioritize findings, risks, regressions, and missing tests. Findings first.';
+            }
             const systemPrompt = `You are OpenGravity, a local-first coding agent running inside VS Code.
 Be precise, pragmatic, and safe.
 You can inspect and modify the workspace through tools.
@@ -288,6 +301,7 @@ If a request is ambiguous, state your assumptions briefly and proceed with the m
 ${agentRuntime_1.AgentRuntime.getToolInstructions()}
 Return concise markdown in final answers.
 ${thinkingInstruction}
+${modeInstruction}
 
 ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''}`;
             const fullSystemContext = `${systemPrompt}\n\n${contextMsg}`;
@@ -301,11 +315,20 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
             const runtime = new agentRuntime_1.AgentRuntime(this._ollamaService, {
                 onStatus: (status) => this._view?.webview.postMessage({ command: 'chatResponse', text: status })
             });
+            let attachmentContext = '';
+            if (attachments.length > 0) {
+                const fileSnippets = attachments.slice(0, 8).map((a) => {
+                    const raw = a.content || '';
+                    const trimmed = raw.length > 24000 ? `${raw.slice(0, 24000)}\n[truncated]` : raw;
+                    return `<attachment name="${a.name}" mime="${a.mimeType || 'text/plain'}">\n${trimmed}\n</attachment>`;
+                });
+                attachmentContext = `\n\n<attached_files>\n${fileSnippets.join('\n')}\n</attached_files>`;
+            }
             const result = await runtime.run({
                 history: this._chatHistory,
                 userMessage: {
                     role: 'user',
-                    content: text,
+                    content: `${text}${attachmentContext}`,
                     images: images.length > 0 ? images : undefined
                 },
                 modelOverride: overrideModel

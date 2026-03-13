@@ -16,6 +16,7 @@
             <div class="title">OpenGravity</div>
         </div>
         <div id="model-controls">
+            <div id="model-capabilities" title="Detected model capabilities"></div>
             <span id="model-memory" style="display:none; margin-right: 10px; font-size: 0.85em; color: #a0a0a0;"
                 title="Memory Usage"></span>
             <select id="model-select" title="Select Model">
@@ -34,6 +35,13 @@
             <textarea id="prompt-input" rows="1" placeholder="Ask OpenGravity..."></textarea>
             <div id="input-controls">
                 <div class="left-controls">
+                    <button id="attach-btn" title="Attach files/images" type="button">Attach</button>
+                    <input id="file-input" type="file" multiple style="display:none;" />
+                    <select id="mode-select" title="Chat Mode">
+                        <option value="execute" selected>Mode: Execute</option>
+                        <option value="plan">Mode: Plan</option>
+                        <option value="review">Mode: Review</option>
+                    </select>
                     <select id="thinking-select" title="Thinking Level">
                         <option value="off">Thinking: Off</option>
                         <option value="low">Thinking: Low</option>
