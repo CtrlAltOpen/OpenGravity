@@ -1,0 +1,24 @@
+# Source files (compiled output in out/ is what runs)
+src/**/*.ts
+!src/webview/**
+
+# Dev tooling
+node_modules/**
+.vscode/**
+tsconfig.json
+.eslintrc.json
+.eslintignore
+package-lock.json
+
+# Git
+.git/**
+.gitignore
+.gitattributes
+
+# Build artifacts
+out/**/*.js.map
+
+# Docs / extras not needed at runtime
+screenshots/**
+llama_default/**
+*.vsix
