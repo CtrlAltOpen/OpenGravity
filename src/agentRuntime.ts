@@ -68,6 +68,7 @@ Allowed tools:
 - replace_in_file: args { "path": string, "search": string, "replace": string, "replaceAll"?: boolean }
 - apply_unified_diff: args { "patch": string }
 - run_terminal_command: args { "command": string }
+- fetch_url: args { "url": string, "maxChars"?: number }
 
 Rules:
 - Never invent file contents; read before editing.
@@ -253,6 +254,22 @@ Rules:
                         additionalProperties: false
                     }
                 }
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'fetch_url',
+                    description: 'Fetch content from a URL and return it as plain text. Useful for documentation, API specs, GitHub raw files, package READMEs, etc. HTML is stripped to text automatically.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            url: { type: 'string' },
+                            maxChars: { type: 'number' }
+                        },
+                        required: ['url'],
+                        additionalProperties: false
+                    }
+                }
             }
         ];
     }
@@ -283,6 +300,8 @@ Rules:
                 return 'Applying patch...';
             case 'run_terminal_command':
                 return 'Running terminal command...';
+            case 'fetch_url':
+                return `Fetching ${typeof args.url === 'string' ? args.url : 'URL'}...`;
             default:
                 return `Using tool: ${call.tool}...`;
         }
@@ -343,6 +362,8 @@ Rules:
                     return await this._toolApplyUnifiedDiff(call.args || {});
                 case 'run_terminal_command':
                     return await this._toolRunTerminalCommand(call.args || {});
+                case 'fetch_url':
+                    return await this._toolFetchUrl(call.args || {});
                 default:
                     return { ok: false, output: `Unknown tool: ${call.tool}` };
             }
@@ -619,6 +640,74 @@ Rules:
         }
 
         return lines.join('\n');
+    }
+
+    private async _toolFetchUrl(args: Record<string, any>): Promise<{ ok: boolean; output: string }> {
+        const config = vscode.workspace.getConfiguration('opengravity');
+        if (!config.get<boolean>('enableFetchTool', false)) {
+            return { ok: false, output: 'fetch_url is disabled. Enable opengravity.enableFetchTool in settings.' };
+        }
+
+        const url = typeof args.url === 'string' ? args.url.trim() : '';
+        if (!url) {
+            return { ok: false, output: 'fetch_url requires a non-empty "url".' };
+        }
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            return { ok: false, output: 'fetch_url only supports http:// and https:// URLs.' };
+        }
+
+        const maxChars = Math.max(1000, Math.min(Number(args.maxChars) || 20000, 100000));
+        const timeoutMs = Math.max(5000, config.get<number>('fetchToolTimeoutMs', 15000));
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+            const response = await fetch(url, {
+                headers: { 'User-Agent': 'OpenGravity-VSCode-Agent/1.0' },
+                signal: controller.signal
+            });
+
+            clearTimeout(timer);
+
+            if (!response.ok) {
+                return { ok: false, output: `HTTP ${response.status} ${response.statusText} — ${url}` };
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+            const raw = await response.text();
+
+            let content: string;
+            if (contentType.includes('text/html')) {
+                content = raw
+                    .replace(/<script[\s\S]*?<\/script>/gi, '')
+                    .replace(/<style[\s\S]*?<\/style>/gi, '')
+                    .replace(/<[^>]+>/g, ' ')
+                    .replace(/&nbsp;/g, ' ')
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&#39;/g, "'")
+                    .replace(/[ \t]{2,}/g, ' ')
+                    .replace(/\n{3,}/g, '\n\n')
+                    .trim();
+            } else {
+                content = raw;
+            }
+
+            const truncated = content.length > maxChars
+                ? content.slice(0, maxChars) + `\n\n[truncated — ${content.length} total chars]`
+                : content;
+
+            return { ok: true, output: truncated };
+        } catch (error: any) {
+            clearTimeout(timer);
+            if (error.name === 'AbortError') {
+                return { ok: false, output: `fetch_url timed out after ${timeoutMs}ms — ${url}` };
+            }
+            return { ok: false, output: `fetch_url failed: ${error?.message || String(error)}` };
+        }
     }
 
     private async _toolRunTerminalCommand(args: Record<string, any>): Promise<{ ok: boolean; output: string }> {

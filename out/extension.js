@@ -452,10 +452,10 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
         const markedUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'marked.min.js'));
         const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'index.html');
         let htmlContent = fs.readFileSync(htmlPath.fsPath, 'utf8');
-        htmlContent = htmlContent.replace('${scriptUri}', scriptUri.toString());
-        htmlContent = htmlContent.replace('${styleUri}', styleUri.toString());
-        htmlContent = htmlContent.replace('${logoUri}', logoUri.toString());
-        htmlContent = htmlContent.replace('${markedUri}', markedUri.toString());
+        htmlContent = htmlContent.replace(/\$\{scriptUri\}/g, scriptUri.toString());
+        htmlContent = htmlContent.replace(/\$\{styleUri\}/g, styleUri.toString());
+        htmlContent = htmlContent.replace(/\$\{logoUri\}/g, logoUri.toString());
+        htmlContent = htmlContent.replace(/\$\{markedUri\}/g, markedUri.toString());
         const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https: data:; script-src ${webview.cspSource} 'unsafe-inline'; style-src ${webview.cspSource} 'unsafe-inline';">`;
         htmlContent = htmlContent.replace('<!-- CSP -->', csp);
         return htmlContent;

@@ -187,10 +187,12 @@ body {
     user-select: none;
 }
 
-.empty-icon {
-    font-size: 28px;
-    margin-bottom: 10px;
-    opacity: 0.4;
+.empty-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    opacity: 0.85;
 }
 
 .empty-title {

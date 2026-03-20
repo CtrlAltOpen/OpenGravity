@@ -172,6 +172,18 @@
           "description": "Include dotfiles in list_files tool output",
           "order": 73
         },
+        "opengravity.enableFetchTool": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow the agent to fetch content from URLs (documentation, API specs, GitHub raw files, etc.). Fetched HTML is stripped to plain text automatically.",
+          "order": 74
+        },
+        "opengravity.fetchToolTimeoutMs": {
+          "type": "integer",
+          "default": 15000,
+          "description": "Timeout in milliseconds for fetch_url tool requests.",
+          "order": 75
+        },
         "opengravity.enableNativeToolCalling": {
           "type": "boolean",
           "default": true,
