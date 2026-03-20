@@ -5,7 +5,8 @@
       "Bash(find /c/Users/engineer/code/OpenGravity -maxdepth 2 -not -path */node_modules/* -not -path */.git/* -type f -o -type d)",
       "Bash(npm run:*)",
       "Bash(ls:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(python3:*)"
     ]
   }
 }
