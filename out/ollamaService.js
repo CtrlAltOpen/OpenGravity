@@ -37,7 +37,7 @@ class OllamaService {
         if (!providerUrlSet && legacyUrlSet && legacyUrl) {
             baseUrl = legacyUrl;
         }
-        const model = modelOverride || config.get('model', 'qwen2.5-coder:7b');
+        const model = modelOverride || config.get('model', '') || '';
         const temp = config.get('temperature', 0.15);
         const maxTokens = config.get('maxTokens', 4096);
         const numCtx = config.get('contextLength', 16384);

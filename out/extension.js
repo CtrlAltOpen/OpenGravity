@@ -204,6 +204,9 @@ function activate(context) {
             : 'Model: (none reported by endpoint)';
         vscode.window.showInformationMessage(`OpenGravity connected to ${diagnostics.provider} at ${diagnostics.baseUrl}. ${modelPart}`);
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('opengravity.clearChat', () => {
+        provider.clearChat();
+    }));
     const inlineProvider = vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, new completionProvider_1.OllamaCompletionProvider());
     context.subscriptions.push(inlineProvider);
 }
@@ -212,6 +215,10 @@ class OllamaViewProvider {
         this._chatHistory = [];
         this._extensionUri = extensionUri;
         this._ollamaService = new ollamaService_1.OllamaService();
+    }
+    clearChat() {
+        this._chatHistory = [];
+        this._view?.webview.postMessage({ command: 'clearChat' });
     }
     resolveWebviewView(webviewView, context, _token) {
         this._view = webviewView;
@@ -251,7 +258,7 @@ class OllamaViewProvider {
                         const config = vscode.workspace.getConfiguration('opengravity');
                         this._view?.webview.postMessage({
                             command: 'settings',
-                            model: config.get('model', 'qwen2.5-coder:7b'),
+                            model: config.get('model', ''),
                             thinkingLevel: config.get('thinkingLevel', 'medium'),
                             chatMode: config.get('chatMode', 'execute')
                         });
@@ -265,6 +272,9 @@ class OllamaViewProvider {
                     break;
                 case 'cancelChat':
                     this._ollamaService.cancelChat();
+                    break;
+                case 'clearChat':
+                    this._chatHistory = [];
                     break;
             }
         });
@@ -293,12 +303,26 @@ class OllamaViewProvider {
             else if (selectedMode === 'review') {
                 modeInstruction = 'Mode is REVIEW: prioritize findings, risks, regressions, and missing tests. Findings first.';
             }
-            const systemPrompt = `You are OpenGravity, a local-first coding agent running inside VS Code.
-Be precise, pragmatic, and safe.
-You can inspect and modify the workspace through tools.
-Before writing or changing code, gather enough evidence from project files and search results.
-If a request is ambiguous, state your assumptions briefly and proceed with the most likely path.
+            const systemPrompt = `You are OpenGravity, a local-first coding agent running inside VS Code. You run exclusively on local inference (llama.cpp / Ollama / LM Studio) — no cloud calls.
+Be precise, pragmatic, and safe. Prefer minimal, targeted edits over rewrites.
+You can inspect and modify the workspace through tools. Read files before editing them.
+If a request is ambiguous, state your assumptions in one sentence and proceed.
 ${agentRuntime_1.AgentRuntime.getToolInstructions()}
+
+## Code Output Format
+When your final answer contains code for a specific file, place the **workspace-relative path** on the line immediately before its code fence, formatted as a bold inline-code span:
+
+**\`src/path/to/file.ext\`**
+\`\`\`language
+// code here
+\`\`\`
+
+This allows the user to apply changes with one click. Follow these rules:
+- One label per code block, referencing the exact file being changed.
+- Use the path relative to the workspace root (e.g. \`src/utils/helper.ts\`, not \`/absolute/path\`).
+- If multiple files need changes, label each block separately.
+- For code snippets with no target file, omit the label.
+
 Return concise markdown in final answers.
 ${thinkingInstruction}
 ${modeInstruction}
@@ -313,7 +337,7 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
             }
             this._view?.webview.postMessage({ command: 'showLoading' });
             const runtime = new agentRuntime_1.AgentRuntime(this._ollamaService, {
-                onStatus: (status) => this._view?.webview.postMessage({ command: 'chatResponse', text: status })
+                onStatus: (status) => this._view?.webview.postMessage({ command: 'toolStatus', text: status.trim() })
             });
             let attachmentContext = '';
             if (attachments.length > 0) {
@@ -344,6 +368,24 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
     }
     async _buildContextMessage() {
         let contextMsg = '';
+        // Include active editor position and selection
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor && activeEditor.document.uri.scheme === 'file') {
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            const rel = workspaceRoot
+                ? path.relative(workspaceRoot, activeEditor.document.uri.fsPath).replace(/\\/g, '/')
+                : activeEditor.document.uri.fsPath;
+            const pos = activeEditor.selection.active;
+            if (!activeEditor.selection.isEmpty) {
+                const selStart = activeEditor.selection.start;
+                const selEnd = activeEditor.selection.end;
+                const selText = activeEditor.document.getText(activeEditor.selection);
+                contextMsg += `<active_editor path="${rel}" line="${pos.line + 1}" col="${pos.character + 1}">\n<selected_text lines="${selStart.line + 1}-${selEnd.line + 1}">\n${selText}\n</selected_text>\n</active_editor>\n`;
+            }
+            else {
+                contextMsg += `<active_editor path="${rel}" line="${pos.line + 1}" col="${pos.character + 1}" />\n`;
+            }
+        }
         const documents = vscode.workspace.textDocuments;
         if (documents.length > 0) {
             contextMsg += '<open_files>\n';

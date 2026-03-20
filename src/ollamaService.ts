@@ -109,7 +109,7 @@ export class OllamaService {
             baseUrl = legacyUrl;
         }
 
-        const model = modelOverride || config.get<string>('model', 'qwen2.5-coder:7b');
+        const model = modelOverride || config.get<string>('model', '') || '';
         const temp = config.get<number>('temperature', 0.15);
         const maxTokens = config.get<number>('maxTokens', 4096);
         const numCtx = config.get<number>('contextLength', 16384);

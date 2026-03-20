@@ -116,8 +116,7 @@ Rules:
 
             for (const toolCall of toolCalls) {
                 const toolResult = await this._executeTool(toolCall);
-                const preview = `${toolCall.tool}${toolResult.ok ? '' : ' (failed)'}`;
-                this._callbacks.onStatus?.(` [[TOOL:${preview}]] `);
+                this._callbacks.onStatus?.(`${this._formatToolStatus(toolCall)}\n`);
 
                 workingHistory.push({
                     role: 'tool',
@@ -133,7 +132,7 @@ Rules:
             }
         }
 
-        const fallback = 'I hit the agent step limit before finishing. I can continue if you want me to keep going.';
+        const fallback = `I reached the agent step limit (${maxSteps} steps) before completing. You can increase **Agent Max Steps** in settings, or ask me to continue from where I left off.`;
         return {
             finalResponse: fallback,
             updatedHistory: [...publicHistory, { role: 'assistant', content: fallback }]
@@ -264,6 +263,29 @@ Rules:
             tool: call.name,
             args: call.arguments || {}
         }));
+    }
+
+    private _formatToolStatus(call: ToolCall): string {
+        const args = call.args || {};
+        const pathArg = typeof args.path === 'string' ? args.path : '';
+        switch (call.tool) {
+            case 'read_file':
+                return `Reading ${pathArg || 'file'}...`;
+            case 'list_files':
+                return `Listing files${pathArg ? ` in ${pathArg}` : ''}...`;
+            case 'search_in_files':
+                return `Searching files for "${typeof args.query === 'string' ? args.query : ''}"...`;
+            case 'write_file':
+                return `Writing ${pathArg || 'file'}...`;
+            case 'replace_in_file':
+                return `Updating ${pathArg || 'file'}...`;
+            case 'apply_unified_diff':
+                return 'Applying patch...';
+            case 'run_terminal_command':
+                return 'Running terminal command...';
+            default:
+                return `Using tool: ${call.tool}...`;
+        }
     }
 
     private _extractToolCall(text: string): ToolCall | undefined {

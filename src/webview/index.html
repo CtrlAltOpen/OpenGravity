@@ -12,22 +12,34 @@
 <body>
     <div id="header">
         <div class="header-left">
-            <img src="${logoUri}" alt="OpenGravity Logo" style="height: 24px; width: 24px; border-radius: 4px;">
+            <img src="${logoUri}" alt="OpenGravity Logo" style="height: 20px; width: 20px; border-radius: 3px; flex-shrink:0;">
             <div class="title">OpenGravity</div>
+        </div>
+        <div id="header-actions">
+            <button id="new-chat-btn" type="button" title="New chat (clears history)">New</button>
+            <button id="refresh-models-btn" type="button" title="Refresh model list">⟳</button>
         </div>
         <div id="model-controls">
             <div id="model-capabilities" title="Detected model capabilities"></div>
-            <span id="model-memory" style="display:none; margin-right: 10px; font-size: 0.85em; color: #a0a0a0;"
-                title="Memory Usage"></span>
+            <span id="model-memory" style="display:none;" title="Model memory usage"></span>
             <select id="model-select" title="Select Model">
-                <option value="" disabled selected>Loading models...</option>
+                <option value="" disabled selected>Connecting...</option>
             </select>
         </div>
     </div>
 
     <div id="chat-container">
         <div id="messages">
-            <!-- Messages will be inserted here -->
+            <div id="empty-state">
+                <div class="empty-icon">⬡</div>
+                <div class="empty-title">OpenGravity</div>
+                <div class="empty-subtitle">Local-first coding agent</div>
+                <div class="empty-tips">
+                    <div class="tip">Ask to edit, explain, or refactor code</div>
+                    <div class="tip">Attach files or paste images</div>
+                    <div class="tip">Use Plan mode for architecture first</div>
+                </div>
+            </div>
         </div>
 
         <div id="input-area">
@@ -35,21 +47,25 @@
             <textarea id="prompt-input" rows="1" placeholder="Ask OpenGravity..."></textarea>
             <div id="input-controls">
                 <div class="left-controls">
-                    <button id="attach-btn" title="Attach files/images" type="button">Attach</button>
+                    <button id="attach-btn" title="Attach files or images" type="button">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                    </button>
                     <input id="file-input" type="file" multiple style="display:none;" />
                     <select id="mode-select" title="Chat Mode">
-                        <option value="execute" selected>Mode: Execute</option>
-                        <option value="plan">Mode: Plan</option>
-                        <option value="review">Mode: Review</option>
+                        <option value="execute" selected>Execute</option>
+                        <option value="plan">Plan</option>
+                        <option value="review">Review</option>
                     </select>
                     <select id="thinking-select" title="Thinking Level">
-                        <option value="off">Thinking: Off</option>
-                        <option value="low">Thinking: Low</option>
-                        <option value="medium" selected>Thinking: Medium</option>
-                        <option value="high">Thinking: High</option>
+                        <option value="off">Think: Off</option>
+                        <option value="low">Think: Low</option>
+                        <option value="medium" selected>Think: Med</option>
+                        <option value="high">Think: High</option>
                     </select>
                 </div>
-                <button id="send-btn">Send</button>
+                <button id="send-btn" title="Send (Enter) or Stop (while generating)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                </button>
             </div>
         </div>
     </div>
