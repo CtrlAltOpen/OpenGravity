@@ -473,11 +473,32 @@ export class OllamaService {
         }
     }
 
+    private _buildFimPrompt(prefix: string, suffix: string, modelId: string): string | null {
+        const m = modelId.toLowerCase();
+        if (/qwen/.test(m)) {
+            return `<|fim_prefix|>${prefix}<|fim_suffix|>${suffix}<|fim_middle|>`;
+        }
+        if (/deepseek.?coder/.test(m)) {
+            return `<｜fim▁begin｜>${prefix}<｜fim▁hole｜>${suffix}<｜fim▁end｜>`;
+        }
+        if (/codellama|code.?llama/.test(m)) {
+            return `<PRE> ${prefix} <SUF>${suffix} <MID>`;
+        }
+        if (/starcoder/.test(m)) {
+            return `<fim_prefix>${prefix}<fim_suffix>${suffix}<fim_middle>`;
+        }
+        return null;
+    }
+
     public async complete(
         messages: ChatMessage[],
         modelOverride?: string,
-        tools?: ToolDefinition[]
+        tools?: ToolDefinition[],
+        onChunk?: (text: string) => void
     ): Promise<{ text: string; raw?: any; aborted?: boolean; assistantMessage?: ChatMessage; toolCalls?: ParsedToolCall[] }> {
+        if (onChunk) {
+            return this._completeStreaming(messages, modelOverride, tools, onChunk);
+        }
         const request = this._buildRequest(messages, modelOverride, false, tools);
 
         try {
@@ -539,6 +560,152 @@ export class OllamaService {
         }
     }
 
+    private async _completeStreaming(
+        messages: ChatMessage[],
+        modelOverride: string | undefined,
+        tools: ToolDefinition[] | undefined,
+        onChunk: (text: string) => void
+    ): Promise<{ text: string; raw?: any; aborted?: boolean; assistantMessage?: ChatMessage; toolCalls?: ParsedToolCall[] }> {
+        const request = this._buildRequest(messages, modelOverride, true, tools);
+
+        try {
+            const response = await fetch(request.endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request.body),
+                signal: this._abortController.signal
+            });
+
+            if (!response.ok) {
+                await this._throwWithBody(response);
+            }
+            if (!response.body) {
+                throw new Error('No response body');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            let fullText = '';
+            let rawFinal: any = null;
+            let xmlToolCallSeen = false;
+
+            // Accumulate native tool call deltas (OpenAI-compat streaming format)
+            const tcBuffers: Record<number, { id?: string; name: string; args: string }> = {};
+
+            outer: while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split('\n');
+
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    const raw = line.startsWith('data: ') ? line.slice(6) : line;
+                    if (raw === '[DONE]') break outer;
+
+                    try {
+                        const json: any = JSON.parse(raw);
+
+                        if (request.cfg.kind === 'openaiCompat') {
+                            const delta = json.choices?.[0]?.delta;
+                            if (delta?.content) {
+                                fullText += delta.content;
+                                if (!xmlToolCallSeen) {
+                                    if (fullText.trimStart().startsWith('<tool_call>')) {
+                                        xmlToolCallSeen = true;
+                                    } else {
+                                        onChunk(delta.content);
+                                    }
+                                }
+                            }
+                            if (Array.isArray(delta?.tool_calls)) {
+                                for (const tc of delta.tool_calls) {
+                                    const idx = tc.index ?? 0;
+                                    if (!tcBuffers[idx]) {
+                                        tcBuffers[idx] = { id: tc.id, name: '', args: '' };
+                                    }
+                                    if (tc.id) { tcBuffers[idx].id = tc.id; }
+                                    if (tc.function?.name) { tcBuffers[idx].name += tc.function.name; }
+                                    if (tc.function?.arguments) { tcBuffers[idx].args += tc.function.arguments; }
+                                }
+                            }
+                            if (json.choices?.[0]?.finish_reason) { rawFinal = json; }
+
+                        } else if (request.cfg.kind === 'llamacppNative') {
+                            const text = json.content || '';
+                            if (text) {
+                                fullText += text;
+                                if (!xmlToolCallSeen) {
+                                    if (fullText.trimStart().startsWith('<tool_call>')) {
+                                        xmlToolCallSeen = true;
+                                    } else {
+                                        onChunk(text);
+                                    }
+                                }
+                            }
+                            if (json.stop) { rawFinal = json; }
+
+                        } else {
+                            // Ollama
+                            const text = json.message?.content || '';
+                            if (text) {
+                                fullText += text;
+                                if (!xmlToolCallSeen) {
+                                    if (fullText.trimStart().startsWith('<tool_call>')) {
+                                        xmlToolCallSeen = true;
+                                    } else {
+                                        onChunk(text);
+                                    }
+                                }
+                            }
+                            if (json.done) { rawFinal = json; }
+                        }
+                    } catch {
+                        // Ignore malformed chunks
+                    }
+                }
+            }
+
+            // Reconstruct native tool calls from streaming buffers
+            let nativeToolCalls: ParsedToolCall[] = [];
+            let rawToolCallsForHistory: any[] | undefined;
+
+            if (request.cfg.kind === 'openaiCompat') {
+                const entries = Object.values(tcBuffers);
+                if (entries.length > 0) {
+                    rawToolCallsForHistory = entries.map(tc => ({
+                        id: tc.id,
+                        type: 'function',
+                        function: { name: tc.name, arguments: tc.args }
+                    }));
+                    nativeToolCalls = this._extractToolCalls(rawToolCallsForHistory);
+                }
+            } else if (request.cfg.kind === 'ollama') {
+                rawToolCallsForHistory = rawFinal?.message?.tool_calls;
+                nativeToolCalls = this._extractToolCalls(rawToolCallsForHistory);
+            }
+
+            return {
+                text: fullText,
+                toolCalls: nativeToolCalls.length > 0 ? nativeToolCalls : undefined,
+                assistantMessage: {
+                    role: 'assistant',
+                    content: fullText,
+                    tool_calls: rawToolCallsForHistory
+                },
+                raw: rawFinal
+            };
+
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                return { text: '', aborted: true };
+            }
+            throw error;
+        }
+    }
+
     private _extractToolCalls(rawCalls: any): ParsedToolCall[] {
         if (!Array.isArray(rawCalls)) {
             return [];
@@ -572,8 +739,17 @@ export class OllamaService {
         return calls;
     }
 
-    public async generate(prompt: string, options?: GenerateOptions): Promise<string> {
+    public async generate(prompt: string, options?: GenerateOptions & { suffix?: string }): Promise<string> {
         const cfg = this._getProviderConfig();
+
+        // Build FIM prompt when suffix is provided and model supports it
+        if (options?.suffix !== undefined && options.suffix !== '') {
+            const fimPrompt = this._buildFimPrompt(prompt, options.suffix, cfg.model);
+            if (fimPrompt !== null) {
+                prompt = fimPrompt;
+            }
+        }
+
         const maxTokens = options?.maxTokens ?? 128;
 
         if (cfg.kind === 'openaiCompat') {

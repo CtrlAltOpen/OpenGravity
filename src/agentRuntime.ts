@@ -15,6 +15,7 @@ type ToolCall = {
 
 type AgentCallbacks = {
     onStatus?: (status: string) => void;
+    onChunk?: (chunk: string) => void;
 };
 
 type AgentRunInput = {
@@ -91,7 +92,8 @@ Rules:
             const completion = await this._service.complete(
                 workingHistory,
                 input.modelOverride,
-                nativeToolCalling ? this._getToolDefinitions() : undefined
+                nativeToolCalling ? this._getToolDefinitions() : undefined,
+                this._callbacks.onChunk
             );
             if (completion.aborted) {
                 return {
@@ -827,6 +829,16 @@ Rules:
         const command = typeof args.command === 'string' ? args.command.trim() : '';
         if (!command) {
             return { ok: false, output: 'run_terminal_command requires "command".' };
+        }
+
+        const choice = await vscode.window.showWarningMessage(
+            `OpenGravity wants to run a terminal command:\n\n${command}`,
+            { modal: true },
+            'Allow',
+            'Deny'
+        );
+        if (choice !== 'Allow') {
+            return { ok: false, output: 'Terminal command was denied by the user.' };
         }
 
         const cwd = this._workspaceRoot;

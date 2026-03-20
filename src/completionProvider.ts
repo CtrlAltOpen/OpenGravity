@@ -24,6 +24,8 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
         const debounceMs = Math.max(50, config.get<number>('autocompleteDebounceMs', 300));
         const contextSize = Math.max(200, config.get<number>('autocompleteContextLength', 2000));
         const autocompleteMaxTokens = Math.max(16, config.get<number>('autocompleteMaxTokens', 128));
+        // Suffix context for FIM — a modest window after the cursor
+        const suffixSize = Math.floor(contextSize / 4);
 
         return new Promise((resolve) => {
             if (this._timer) {
@@ -36,11 +38,13 @@ export class OllamaCompletionProvider implements vscode.InlineCompletionItemProv
                     return;
                 }
 
-                const textBefore = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
-                const prompt = textBefore.slice(-contextSize);
+                const docEnd = document.lineAt(document.lineCount - 1).range.end;
+                const prefix = document.getText(new vscode.Range(new vscode.Position(0, 0), position)).slice(-contextSize);
+                const suffix = document.getText(new vscode.Range(position, docEnd)).slice(0, suffixSize);
 
-                const completion = await this._ollamaService.generate(prompt, {
-                    maxTokens: autocompleteMaxTokens
+                const completion = await this._ollamaService.generate(prefix, {
+                    maxTokens: autocompleteMaxTokens,
+                    suffix
                 });
 
                 if (completion && !token.isCancellationRequested) {

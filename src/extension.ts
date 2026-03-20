@@ -75,7 +75,7 @@ async function applyPreset(preset: PresetName): Promise<void> {
 export function activate(context: vscode.ExtensionContext) {
     console.log('OpenGravity is now active!');
 
-    const provider = new OllamaViewProvider(context.extensionUri);
+    const provider = new OllamaViewProvider(context.extensionUri, context);
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(OllamaViewProvider.viewType, provider, {
@@ -223,16 +223,36 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'opengravity.chatView';
     private _view?: vscode.WebviewView;
     private readonly _extensionUri: vscode.Uri;
+    private readonly _context: vscode.ExtensionContext;
     private _ollamaService: OllamaService;
     private _chatHistory: { role: string, content: string, images?: string[] }[] = [];
 
-    constructor(extensionUri: vscode.Uri) {
+    constructor(extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
         this._extensionUri = extensionUri;
+        this._context = context;
         this._ollamaService = new OllamaService();
+        this._loadHistory();
+    }
+
+    private _loadHistory(): void {
+        const saved = this._context.globalState.get<any[]>('chatHistory', []);
+        if (Array.isArray(saved) && saved.length > 0) {
+            // Prepend a placeholder system message; it gets replaced on first request
+            this._chatHistory = [{ role: 'system', content: '' }, ...saved];
+        }
+    }
+
+    private async _saveHistory(): Promise<void> {
+        // Only persist user/assistant turns — no system messages or tool results with embedded file contents
+        const toSave = this._chatHistory
+            .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+            .slice(-40); // cap at 40 messages
+        await this._context.globalState.update('chatHistory', toSave);
     }
 
     public clearChat() {
         this._chatHistory = [];
+        this._context.globalState.update('chatHistory', []);
         this._view?.webview.postMessage({ command: 'clearChat' });
     }
 
@@ -389,6 +409,9 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
 
     private async _handleChat(text: string, images: string[], overrideModel?: string, thinkingLevel?: string, chatMode?: string, attachments: { name: string, mimeType?: string, content?: string }[] = []) {
         try {
+            // Show loading immediately — visible during summarization and context gathering
+            this._view?.webview.postMessage({ command: 'showLoading' });
+
             await this._maybeSummarizeHistory();
             const contextMsg = await this._buildContextMessage();
             const config = vscode.workspace.getConfiguration('opengravity');
@@ -457,10 +480,13 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
                 this._chatHistory[0].content = fullSystemContext;
             }
 
-            this._view?.webview.postMessage({ command: 'showLoading' });
-
+            let streamedChunks = 0;
             const runtime = new AgentRuntime(this._ollamaService, {
-                onStatus: (status) => this._view?.webview.postMessage({ command: 'toolStatus', text: status.trim() })
+                onStatus: (status) => this._view?.webview.postMessage({ command: 'toolStatus', text: status.trim() }),
+                onChunk: (chunk) => {
+                    streamedChunks++;
+                    this._view?.webview.postMessage({ command: 'chatResponse', text: chunk });
+                }
             });
 
             let attachmentContext = '';
@@ -484,7 +510,11 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
             });
 
             this._chatHistory = result.updatedHistory;
-            this._view?.webview.postMessage({ command: 'chatResponse', text: result.finalResponse });
+            await this._saveHistory();
+            // Only post full response if nothing was streamed (e.g. aborted, step-limit, or XML fallback)
+            if (streamedChunks === 0) {
+                this._view?.webview.postMessage({ command: 'chatResponse', text: result.finalResponse });
+            }
             this._view?.webview.postMessage({ command: 'chatDone', metrics: result.metrics });
         } catch (e: any) {
             this._view?.webview.postMessage({ command: 'chatResponse', text: `Error: ${e.message}` });
@@ -534,6 +564,30 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
                 }
             }
             contextMsg += '</open_files>\n';
+        }
+
+        // Include VS Code diagnostics (errors and warnings) for workspace files
+        const allDiags = vscode.languages.getDiagnostics();
+        const diagLines: string[] = [];
+        const workspaceRootForDiags = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        for (const [uri, diags] of allDiags) {
+            if (uri.scheme !== 'file') { continue; }
+            const relevant = diags.filter(d =>
+                d.severity === vscode.DiagnosticSeverity.Error ||
+                d.severity === vscode.DiagnosticSeverity.Warning
+            );
+            if (relevant.length === 0) { continue; }
+            const rel = workspaceRootForDiags
+                ? path.relative(workspaceRootForDiags, uri.fsPath).replace(/\\/g, '/')
+                : uri.fsPath;
+            for (const d of relevant.slice(0, 10)) {
+                const sev = d.severity === vscode.DiagnosticSeverity.Error ? 'error' : 'warning';
+                diagLines.push(`${rel}:${d.range.start.line + 1}: [${sev}] ${d.message}`);
+            }
+            if (diagLines.length >= 50) { break; }
+        }
+        if (diagLines.length > 0) {
+            contextMsg += `<diagnostics>\n${diagLines.join('\n')}\n</diagnostics>\n`;
         }
 
         const workspaceFolders = vscode.workspace.workspaceFolders;
