@@ -181,8 +181,34 @@
         "opengravity.fetchToolTimeoutMs": {
           "type": "integer",
           "default": 15000,
-          "description": "Timeout in milliseconds for fetch_url tool requests.",
+          "description": "Timeout in milliseconds for fetch_url and web_search tool requests.",
           "order": 75
+        },
+        "opengravity.enableWebSearch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow the agent to search the web for information, best practices, documentation, and context. Requires configuring a search provider below.",
+          "order": 76
+        },
+        "opengravity.webSearchProvider": {
+          "type": "string",
+          "enum": ["brave", "searxng"],
+          "default": "brave",
+          "description": "Search provider for web_search tool. 'brave' uses the Brave Search API (free tier, requires API key). 'searxng' uses a self-hosted SearXNG instance (no key, fully private).",
+          "enumItemLabels": ["Brave Search API", "SearXNG (self-hosted)"],
+          "order": 77
+        },
+        "opengravity.braveSearchApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Brave Search API key for web_search. Free tier includes 2,000 queries/month. Get a key at https://brave.com/search/api/",
+          "order": 78
+        },
+        "opengravity.searxngUrl": {
+          "type": "string",
+          "default": "http://localhost:8888",
+          "description": "Base URL of your self-hosted SearXNG instance (used when webSearchProvider is 'searxng').",
+          "order": 79
         },
         "opengravity.enableNativeToolCalling": {
           "type": "boolean",

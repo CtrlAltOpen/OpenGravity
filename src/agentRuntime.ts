@@ -69,6 +69,7 @@ Allowed tools:
 - apply_unified_diff: args { "patch": string }
 - run_terminal_command: args { "command": string }
 - fetch_url: args { "url": string, "maxChars"?: number }
+- web_search: args { "query": string, "maxResults"?: number }
 
 Rules:
 - Never invent file contents; read before editing.
@@ -270,6 +271,22 @@ Rules:
                         additionalProperties: false
                     }
                 }
+            },
+            {
+                type: 'function',
+                function: {
+                    name: 'web_search',
+                    description: 'Search the web and return a list of results with titles, URLs, and snippets. Use this to discover relevant pages, then fetch_url to read them in full.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            query: { type: 'string' },
+                            maxResults: { type: 'number' }
+                        },
+                        required: ['query'],
+                        additionalProperties: false
+                    }
+                }
             }
         ];
     }
@@ -302,6 +319,8 @@ Rules:
                 return 'Running terminal command...';
             case 'fetch_url':
                 return `Fetching ${typeof args.url === 'string' ? args.url : 'URL'}...`;
+            case 'web_search':
+                return `Searching the web for "${typeof args.query === 'string' ? args.query : ''}"...`;
             default:
                 return `Using tool: ${call.tool}...`;
         }
@@ -364,6 +383,8 @@ Rules:
                     return await this._toolRunTerminalCommand(call.args || {});
                 case 'fetch_url':
                     return await this._toolFetchUrl(call.args || {});
+                case 'web_search':
+                    return await this._toolWebSearch(call.args || {});
                 default:
                     return { ok: false, output: `Unknown tool: ${call.tool}` };
             }
@@ -707,6 +728,92 @@ Rules:
                 return { ok: false, output: `fetch_url timed out after ${timeoutMs}ms — ${url}` };
             }
             return { ok: false, output: `fetch_url failed: ${error?.message || String(error)}` };
+        }
+    }
+
+    private async _toolWebSearch(args: Record<string, any>): Promise<{ ok: boolean; output: string }> {
+        const config = vscode.workspace.getConfiguration('opengravity');
+        if (!config.get<boolean>('enableWebSearch', false)) {
+            return { ok: false, output: 'web_search is disabled. Enable opengravity.enableWebSearch in settings.' };
+        }
+
+        const query = typeof args.query === 'string' ? args.query.trim() : '';
+        if (!query) {
+            return { ok: false, output: 'web_search requires a non-empty "query".' };
+        }
+
+        const maxResults = Math.max(1, Math.min(Number(args.maxResults) || 5, 10));
+        const provider = config.get<string>('webSearchProvider', 'brave');
+        const timeoutMs = Math.max(5000, config.get<number>('fetchToolTimeoutMs', 15000));
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+            let results: { title: string; url: string; snippet: string }[] = [];
+
+            if (provider === 'brave') {
+                const apiKey = config.get<string>('braveSearchApiKey', '').trim();
+                if (!apiKey) {
+                    return { ok: false, output: 'Brave Search requires opengravity.braveSearchApiKey to be set. Get a free key at https://brave.com/search/api/' };
+                }
+                const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${maxResults}`;
+                const response = await fetch(url, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Subscription-Token': apiKey
+                    },
+                    signal: controller.signal
+                });
+                clearTimeout(timer);
+                if (!response.ok) {
+                    return { ok: false, output: `Brave Search API error: ${response.status} ${response.statusText}` };
+                }
+                const data: any = await response.json();
+                results = (data?.web?.results || []).slice(0, maxResults).map((r: any) => ({
+                    title: r.title || '',
+                    url: r.url || '',
+                    snippet: r.description || ''
+                }));
+
+            } else if (provider === 'searxng') {
+                const baseUrl = config.get<string>('searxngUrl', 'http://localhost:8888').replace(/\/$/, '');
+                const url = `${baseUrl}/search?q=${encodeURIComponent(query)}&format=json&engines=general&pageno=1`;
+                const response = await fetch(url, {
+                    headers: { 'Accept': 'application/json' },
+                    signal: controller.signal
+                });
+                clearTimeout(timer);
+                if (!response.ok) {
+                    return { ok: false, output: `SearXNG error: ${response.status} ${response.statusText} — is your SearXNG instance running at ${baseUrl}?` };
+                }
+                const data: any = await response.json();
+                results = (data?.results || []).slice(0, maxResults).map((r: any) => ({
+                    title: r.title || '',
+                    url: r.url || '',
+                    snippet: r.content || ''
+                }));
+
+            } else {
+                return { ok: false, output: `Unknown search provider "${provider}". Set opengravity.webSearchProvider to "brave" or "searxng".` };
+            }
+
+            if (results.length === 0) {
+                return { ok: true, output: 'No results found.' };
+            }
+
+            const formatted = results.map((r, i) =>
+                `[${i + 1}] ${r.title}\n    URL: ${r.url}\n    ${r.snippet}`
+            ).join('\n\n');
+
+            return { ok: true, output: formatted };
+
+        } catch (error: any) {
+            clearTimeout(timer);
+            if (error.name === 'AbortError') {
+                return { ok: false, output: `web_search timed out after ${timeoutMs}ms` };
+            }
+            return { ok: false, output: `web_search failed: ${error?.message || String(error)}` };
         }
     }
 

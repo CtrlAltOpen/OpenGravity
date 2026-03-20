@@ -121,7 +121,11 @@ All settings are in **Settings > Extensions > OpenGravity** and take effect imme
 | `opengravity.terminalCommandTimeoutMs` | Timeout for `run_terminal_command` (ms) | `20000` |
 | `opengravity.includeHiddenFilesInList` | Include dotfiles in `list_files` output | `false` |
 | `opengravity.enableFetchTool` | Allow the agent to fetch content from URLs | `false` |
-| `opengravity.fetchToolTimeoutMs` | Timeout for `fetch_url` requests (ms) | `15000` |
+| `opengravity.fetchToolTimeoutMs` | Timeout for `fetch_url` and `web_search` requests (ms) | `15000` |
+| `opengravity.enableWebSearch` | Allow the agent to search the web | `false` |
+| `opengravity.webSearchProvider` | Search provider: `brave` or `searxng` | `brave` |
+| `opengravity.braveSearchApiKey` | Brave Search API key (free tier) | `""` |
+| `opengravity.searxngUrl` | SearXNG instance base URL | `http://localhost:8888` |
 
 ### Autocomplete
 
@@ -252,8 +256,25 @@ Applying a preset updates temperature, context length, token limits, penalties, 
 | `apply_unified_diff` | Apply a unified diff patch across one or more files | always on |
 | `run_terminal_command` | Run a shell command in the workspace root | disabled |
 | `fetch_url` | Fetch any `http/https` URL as plain text — docs, specs, GitHub files | disabled |
+| `web_search` | Search the web and return ranked results with titles, URLs, and snippets | disabled |
 
-All file tools are sandboxed to the workspace root. `run_terminal_command` and `fetch_url` are disabled by default and must be explicitly enabled in settings.
+All file tools are sandboxed to the workspace root. `run_terminal_command`, `fetch_url`, and `web_search` are disabled by default and must be explicitly enabled in settings.
+
+**`web_search` details:**
+- Returns up to 10 results per query (title, URL, snippet)
+- The agent automatically follows up with `fetch_url` to read relevant pages in full
+- Two providers supported — choose based on your privacy preference:
+
+| Provider | Privacy | Setup |
+| --- | --- | --- |
+| **Brave Search** | API call to Brave (privacy-respecting) | Free API key at brave.com/search/api — 2,000 queries/month |
+| **SearXNG** | 100% self-hosted, zero external calls | Run a local SearXNG instance (`docker run searxng/searxng`) |
+
+To enable web search:
+1. Set `opengravity.enableWebSearch = true`
+2. Set `opengravity.webSearchProvider` to `brave` or `searxng`
+3. For Brave: add your API key to `opengravity.braveSearchApiKey`
+4. For SearXNG: set `opengravity.searxngUrl` to your instance URL
 
 **`fetch_url` details:**
 - HTML pages are automatically stripped of scripts, styles, and tags — returned as clean plain text
