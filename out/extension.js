@@ -72,7 +72,7 @@ async function applyPreset(preset) {
 }
 function activate(context) {
     console.log('OpenGravity is now active!');
-    const provider = new OllamaViewProvider(context.extensionUri);
+    const provider = new OllamaViewProvider(context.extensionUri, context);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(OllamaViewProvider.viewType, provider, {
         webviewOptions: { retainContextWhenHidden: true }
     }));
@@ -197,13 +197,30 @@ function activate(context) {
     context.subscriptions.push(inlineProvider);
 }
 class OllamaViewProvider {
-    constructor(extensionUri) {
+    constructor(extensionUri, context) {
         this._chatHistory = [];
         this._extensionUri = extensionUri;
+        this._context = context;
         this._ollamaService = new ollamaService_1.OllamaService();
+        this._loadHistory();
+    }
+    _loadHistory() {
+        const saved = this._context.globalState.get('chatHistory', []);
+        if (Array.isArray(saved) && saved.length > 0) {
+            // Prepend a placeholder system message; it gets replaced on first request
+            this._chatHistory = [{ role: 'system', content: '' }, ...saved];
+        }
+    }
+    async _saveHistory() {
+        // Only persist user/assistant turns — no system messages or tool results with embedded file contents
+        const toSave = this._chatHistory
+            .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+            .slice(-40); // cap at 40 messages
+        await this._context.globalState.update('chatHistory', toSave);
     }
     clearChat() {
         this._chatHistory = [];
+        this._context.globalState.update('chatHistory', []);
         this._view?.webview.postMessage({ command: 'clearChat' });
     }
     resolveWebviewView(webviewView, context, _token) {
@@ -345,6 +362,8 @@ class OllamaViewProvider {
     }
     async _handleChat(text, images, overrideModel, thinkingLevel, chatMode, attachments = []) {
         try {
+            // Show loading immediately — visible during summarization and context gathering
+            this._view?.webview.postMessage({ command: 'showLoading' });
             await this._maybeSummarizeHistory();
             const contextMsg = await this._buildContextMessage();
             const config = vscode.workspace.getConfiguration('opengravity');
@@ -412,9 +431,13 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
             else {
                 this._chatHistory[0].content = fullSystemContext;
             }
-            this._view?.webview.postMessage({ command: 'showLoading' });
+            let streamedChunks = 0;
             const runtime = new agentRuntime_1.AgentRuntime(this._ollamaService, {
-                onStatus: (status) => this._view?.webview.postMessage({ command: 'toolStatus', text: status.trim() })
+                onStatus: (status) => this._view?.webview.postMessage({ command: 'toolStatus', text: status.trim() }),
+                onChunk: (chunk) => {
+                    streamedChunks++;
+                    this._view?.webview.postMessage({ command: 'chatResponse', text: chunk });
+                }
             });
             let attachmentContext = '';
             if (attachments.length > 0) {
@@ -435,7 +458,11 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
                 modelOverride: overrideModel
             });
             this._chatHistory = result.updatedHistory;
-            this._view?.webview.postMessage({ command: 'chatResponse', text: result.finalResponse });
+            await this._saveHistory();
+            // Only post full response if nothing was streamed (e.g. aborted, step-limit, or XML fallback)
+            if (streamedChunks === 0) {
+                this._view?.webview.postMessage({ command: 'chatResponse', text: result.finalResponse });
+            }
             this._view?.webview.postMessage({ command: 'chatDone', metrics: result.metrics });
         }
         catch (e) {
@@ -483,6 +510,33 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
                 }
             }
             contextMsg += '</open_files>\n';
+        }
+        // Include VS Code diagnostics (errors and warnings) for workspace files
+        const allDiags = vscode.languages.getDiagnostics();
+        const diagLines = [];
+        const workspaceRootForDiags = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        for (const [uri, diags] of allDiags) {
+            if (uri.scheme !== 'file') {
+                continue;
+            }
+            const relevant = diags.filter(d => d.severity === vscode.DiagnosticSeverity.Error ||
+                d.severity === vscode.DiagnosticSeverity.Warning);
+            if (relevant.length === 0) {
+                continue;
+            }
+            const rel = workspaceRootForDiags
+                ? path.relative(workspaceRootForDiags, uri.fsPath).replace(/\\/g, '/')
+                : uri.fsPath;
+            for (const d of relevant.slice(0, 10)) {
+                const sev = d.severity === vscode.DiagnosticSeverity.Error ? 'error' : 'warning';
+                diagLines.push(`${rel}:${d.range.start.line + 1}: [${sev}] ${d.message}`);
+            }
+            if (diagLines.length >= 50) {
+                break;
+            }
+        }
+        if (diagLines.length > 0) {
+            contextMsg += `<diagnostics>\n${diagLines.join('\n')}\n</diagnostics>\n`;
         }
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (workspaceFolders) {

@@ -45,11 +45,13 @@ export class AgentRuntime {
     private _service: OllamaService;
     private _callbacks: AgentCallbacks;
     private _workspaceRoot: string | undefined;
+    private _workspaceRoots: string[];
 
     constructor(service: OllamaService, callbacks: AgentCallbacks = {}) {
         this._service = service;
         this._callbacks = callbacks;
-        this._workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        this._workspaceRoots = (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath);
+        this._workspaceRoot = this._workspaceRoots[0];
     }
 
     public static getToolInstructions(): string {
@@ -349,18 +351,22 @@ Rules:
     }
 
     private _resolveWorkspacePath(inputPath: string): string {
-        if (!this._workspaceRoot) {
+        if (this._workspaceRoots.length === 0) {
             throw new Error('No workspace folder is open.');
         }
 
         const resolved = path.isAbsolute(inputPath)
             ? path.resolve(inputPath)
-            : path.resolve(this._workspaceRoot, inputPath);
+            : path.resolve(this._workspaceRoot!, inputPath);
 
-        const rootNorm = path.resolve(this._workspaceRoot).toLowerCase();
         const candidateNorm = resolved.toLowerCase();
-        if (candidateNorm !== rootNorm && !candidateNorm.startsWith(rootNorm + path.sep.toLowerCase())) {
-            throw new Error('Path is outside the workspace root.');
+        const withinAnyRoot = this._workspaceRoots.some(root => {
+            const rootNorm = path.resolve(root).toLowerCase();
+            return candidateNorm === rootNorm || candidateNorm.startsWith(rootNorm + path.sep.toLowerCase());
+        });
+
+        if (!withinAnyRoot) {
+            throw new Error('Path is outside all workspace roots.');
         }
 
         return resolved;
@@ -402,7 +408,7 @@ Rules:
 
         const all = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,out,dist}/**', maxEntries * 2);
         const root = this._workspaceRoot;
-        if (!root) {
+        if (!root || this._workspaceRoots.length === 0) {
             return { ok: false, output: 'No workspace folder is open.' };
         }
 
@@ -417,7 +423,13 @@ Rules:
                 continue;
             }
 
-            const rel = path.relative(root, fsPath).replace(/\\/g, '/');
+            const closestRoot = this._workspaceRoots.reduce((best, r) => {
+                const rNorm = path.resolve(r).toLowerCase();
+                const fNorm = fsPath.toLowerCase();
+                if (fNorm.startsWith(rNorm) && r.length > best.length) { return r; }
+                return best;
+            }, root);
+            const rel = path.relative(closestRoot, fsPath).replace(/\\/g, '/');
             if (!includeHidden && rel.split('/').some(p => p.startsWith('.'))) {
                 continue;
             }

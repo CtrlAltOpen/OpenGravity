@@ -1,9 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { exec as execCb } from 'child_process';
+import { promisify } from 'util';
 import { ModelInfo, OllamaService } from './ollamaService';
 import { OllamaCompletionProvider } from './completionProvider';
 import { AgentRuntime } from './agentRuntime';
+const execAsync = promisify(execCb);
 type PresetName = 'balanced' | 'deterministic' | 'fast';
 
 function getPresetValues(preset: PresetName): Record<string, unknown> {
@@ -543,25 +546,43 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
             }
         }
 
-        const documents = vscode.workspace.textDocuments;
-        if (documents.length > 0) {
-            contextMsg += '<open_files>\n';
-            let budget = 120000;
-            for (const doc of documents) {
-                if (doc.uri.scheme !== 'file' || doc.fileName.includes(path.sep + 'node_modules' + path.sep)) {
-                    continue;
-                }
+        const allDocuments = vscode.workspace.textDocuments.filter(doc =>
+            doc.uri.scheme === 'file' && !doc.fileName.includes(path.sep + 'node_modules' + path.sep)
+        );
+        if (allDocuments.length > 0) {
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            const activeDoc = vscode.window.activeTextEditor?.document;
+            const activeDir = activeDoc ? path.dirname(activeDoc.uri.fsPath) : null;
 
-                const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            // Sort: active editor first, then same-directory files, then the rest
+            const sorted = [...allDocuments].sort((a, b) => {
+                const aIsActive = activeDoc && a.uri.fsPath === activeDoc.uri.fsPath ? 1 : 0;
+                const bIsActive = activeDoc && b.uri.fsPath === activeDoc.uri.fsPath ? 1 : 0;
+                if (aIsActive !== bIsActive) { return bIsActive - aIsActive; }
+                if (activeDir) {
+                    const aInDir = path.dirname(a.uri.fsPath) === activeDir ? 1 : 0;
+                    const bInDir = path.dirname(b.uri.fsPath) === activeDir ? 1 : 0;
+                    if (aInDir !== bInDir) { return bInDir - aInDir; }
+                }
+                return 0;
+            });
+
+            const TOTAL_BUDGET = 120000;
+            const ACTIVE_CAP = 60000;  // active file gets up to 60KB
+            const OTHER_CAP = 10000;   // each other file gets up to 10KB
+            let budget = TOTAL_BUDGET;
+
+            contextMsg += '<open_files>\n';
+            for (const doc of sorted) {
+                if (budget <= 0) { break; }
+                const isActive = activeDoc && doc.uri.fsPath === activeDoc.uri.fsPath;
                 const rel = workspaceRoot ? path.relative(workspaceRoot, doc.uri.fsPath).replace(/\\/g, '/') : doc.uri.fsPath;
                 const text = doc.getText();
-                const available = Math.max(0, budget - 500);
+                const perFileCap = isActive ? ACTIVE_CAP : OTHER_CAP;
+                const available = Math.min(perFileCap, Math.max(0, budget - 200));
                 const snippet = text.slice(0, available);
                 budget -= snippet.length;
-                contextMsg += `<file path="${rel}">\n${snippet}${snippet.length < text.length ? '\n[truncated]' : ''}\n</file>\n`;
-                if (budget <= 0) {
-                    break;
-                }
+                contextMsg += `<file path="${rel}"${isActive ? ' active="true"' : ''}>\n${snippet}${snippet.length < text.length ? '\n[truncated]' : ''}\n</file>\n`;
             }
             contextMsg += '</open_files>\n';
         }
@@ -590,10 +611,35 @@ ${customSystemPrompt ? `\nUser custom instructions:\n${customSystemPrompt}` : ''
             contextMsg += `<diagnostics>\n${diagLines.join('\n')}\n</diagnostics>\n`;
         }
 
+        // Git context: branch, recent commits, uncommitted diff stat
+        const gitRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (gitRoot) {
+            try {
+                const [branchRes, logRes, diffRes] = await Promise.allSettled([
+                    execAsync('git rev-parse --abbrev-ref HEAD', { cwd: gitRoot }),
+                    execAsync('git log --oneline -5', { cwd: gitRoot }),
+                    execAsync('git diff HEAD --stat', { cwd: gitRoot })
+                ]);
+                const branch = branchRes.status === 'fulfilled' ? branchRes.value.stdout.trim() : '';
+                const log = logRes.status === 'fulfilled' ? logRes.value.stdout.trim() : '';
+                const diffStat = diffRes.status === 'fulfilled' ? diffRes.value.stdout.trim() : '';
+                if (branch || log) {
+                    let gitCtx = '';
+                    if (branch) { gitCtx += `Branch: ${branch}\n`; }
+                    if (log) { gitCtx += `Recent commits:\n${log}\n`; }
+                    if (diffStat) { gitCtx += `Uncommitted changes:\n${diffStat}`; }
+                    contextMsg += `<git_context>\n${gitCtx.trim()}\n</git_context>\n`;
+                }
+            } catch { /* not a git repo or git not installed */ }
+        }
+
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (workspaceFolders) {
-            const tree = await this._getFileTree(workspaceFolders[0].uri);
-            contextMsg += `<file_tree>\n${tree}\n</file_tree>`;
+            const trees = await Promise.all(workspaceFolders.map(f => this._getFileTree(f.uri)));
+            const treeText = workspaceFolders.length > 1
+                ? workspaceFolders.map((f, i) => `[${f.name}]\n${trees[i]}`).join('\n')
+                : trees[0];
+            contextMsg += `<file_tree>\n${treeText}\n</file_tree>`;
         }
 
         return contextMsg;

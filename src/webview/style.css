@@ -276,6 +276,31 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.6px;
     margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+}
+
+.copy-response-btn {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+    display: flex;
+    align-items: center;
+}
+
+.message:hover .copy-response-btn {
+    opacity: 1;
+}
+
+.copy-response-btn:hover {
+    color: var(--text-primary);
+    background: var(--border-color);
 }
 
 .message.user .message-header { color: #5a8fb5; }
