@@ -13,6 +13,7 @@ const fileInput = document.getElementById('file-input');
 const modelCapabilities = document.getElementById('model-capabilities');
 const refreshModelsBtn = document.getElementById('refresh-models-btn');
 const newChatBtn = document.getElementById('new-chat-btn');
+const settingsBtn = document.getElementById('settings-btn');
 
 let images = [];
 let currentAssistantMessageDiv = null;
@@ -257,6 +258,12 @@ if (newChatBtn) {
     newChatBtn.addEventListener('click', () => {
         vscode.postMessage({ command: 'clearChat' });
         clearChatUI();
+    });
+}
+
+if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+        vscode.postMessage({ command: 'openSettings' });
     });
 }
 
