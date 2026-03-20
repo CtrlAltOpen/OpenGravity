@@ -9,6 +9,7 @@
     "url": "https://github.com/opengravity/opengravity.git"
   },
   "icon": "opengravitylogo.png",
+  "license": "SEE LICENSE IN LICENSE.md",
   "engines": {
     "vscode": "^1.90.0"
   },
