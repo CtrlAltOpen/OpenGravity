@@ -584,7 +584,7 @@ pre {
     display: inline-block;
     font-size: 1.4em;
     line-height: 0.5;
-    color: var(--text-secondary);
+    color: #7aadcc;
 }
 
 .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
@@ -596,12 +596,13 @@ pre {
 }
 
 .loading-status {
-    font-size: 10px;
-    color: #555;
-    margin-top: 5px;
+    font-size: 11px;
+    color: #7aadcc;
+    margin-top: 6px;
     font-style: italic;
-    min-height: 13px;
+    min-height: 14px;
     transition: opacity 0.2s;
+    opacity: 0.85;
 }
 
 /* Metrics */
