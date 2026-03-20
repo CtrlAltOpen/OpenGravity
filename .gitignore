@@ -7,7 +7,6 @@ out/
 
 # VS Code extension packaging/testing
 .vscode-test/
-*.vsix
 
 # Logs
 *.log
