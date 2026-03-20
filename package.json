@@ -174,7 +174,7 @@
         },
         "opengravity.enableFetchTool": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Allow the agent to fetch content from URLs (documentation, API specs, GitHub raw files, etc.). Fetched HTML is stripped to plain text automatically.",
           "order": 74
         },
