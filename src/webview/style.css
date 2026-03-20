@@ -86,7 +86,8 @@ body {
 }
 
 #new-chat-btn,
-#refresh-models-btn {
+#refresh-models-btn,
+#settings-btn {
     background: transparent;
     color: var(--text-secondary);
     border: 1px solid transparent;
@@ -101,13 +102,15 @@ body {
 }
 
 #new-chat-btn:hover,
-#refresh-models-btn:hover {
+#refresh-models-btn:hover,
+#settings-btn:hover {
     background: rgba(255,255,255,0.07);
     color: var(--text-primary);
     border-color: var(--border-color);
 }
 
-#refresh-models-btn {
+#refresh-models-btn,
+#settings-btn {
     font-size: 14px;
     padding: 2px 5px;
 }

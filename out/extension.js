@@ -295,6 +295,9 @@ class OllamaViewProvider {
                 case 'clearChat':
                     this._chatHistory = [];
                     break;
+                case 'openSettings':
+                    vscode.commands.executeCommand('workbench.action.openSettings', 'opengravity');
+                    break;
             }
         });
     }
