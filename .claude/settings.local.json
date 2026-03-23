@@ -6,7 +6,9 @@
       "Bash(npm run:*)",
       "Bash(ls:*)",
       "Bash(npx tsc:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(wc:*)",
+      "Bash(file:*)"
     ]
   }
 }
