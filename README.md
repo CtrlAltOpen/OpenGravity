@@ -1,6 +1,5 @@
 <div align="center">
   <img src="opengravitylogo.png" alt="OpenGravity Logo" width="128" height="128">
-  <h1>OpenGravity</h1>
   <p><strong>A powerful, 100% private AI coding assistant deeply integrated into VS Code.</strong></p>
   <p>Experience the cutting-edge intelligence of GitHub Copilot and Cursor — running entirely on your own hardware.</p>
 
