@@ -214,6 +214,12 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('opengravity.clearChat', () => {
         provider.clearChat();
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('opengravity.clearProjectHistory', () => {
+        provider.clearChat();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('opengravity.clearAllHistory', () => {
+        provider.clearAllHistory();
+    }));
 
     const inlineProvider = vscode.languages.registerInlineCompletionItemProvider(
         { pattern: '**' },
@@ -238,7 +244,10 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
     }
 
     private _loadHistory(): void {
-        const saved = this._context.globalState.get<any[]>('chatHistory', []);
+        const clearAllBefore = this._context.globalState.get<number>('clearAllHistoryBefore', 0);
+        const savedAt = this._context.workspaceState.get<number>('chatHistorySavedAt', 0);
+        if (savedAt <= clearAllBefore) { return; }
+        const saved = this._context.workspaceState.get<any[]>('chatHistory', []);
         if (Array.isArray(saved) && saved.length > 0) {
             // Prepend a placeholder system message; it gets replaced on first request
             this._chatHistory = [{ role: 'system', content: '' }, ...saved];
@@ -250,13 +259,20 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
         const toSave = this._chatHistory
             .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
             .slice(-40); // cap at 40 messages
-        await this._context.globalState.update('chatHistory', toSave);
+        await this._context.workspaceState.update('chatHistory', toSave);
+        await this._context.workspaceState.update('chatHistorySavedAt', Date.now());
     }
 
     public clearChat() {
         this._chatHistory = [];
-        this._context.globalState.update('chatHistory', []);
+        this._context.workspaceState.update('chatHistory', []);
+        this._context.workspaceState.update('chatHistorySavedAt', 0);
         this._view?.webview.postMessage({ command: 'clearChat' });
+    }
+
+    public clearAllHistory() {
+        this._context.globalState.update('clearAllHistoryBefore', Date.now());
+        this.clearChat();
     }
 
     public resolveWebviewView(
@@ -334,7 +350,10 @@ class OllamaViewProvider implements vscode.WebviewViewProvider {
                         this._ollamaService.cancelChat();
                         break;
                     case 'clearChat':
-                        this._chatHistory = [];
+                        this.clearChat();
+                        break;
+                    case 'clearAllHistory':
+                        this.clearAllHistory();
                         break;
                     case 'openSettings':
                         vscode.commands.executeCommand('workbench.action.openSettings', 'opengravity');

@@ -57,6 +57,14 @@
       {
         "command": "opengravity.clearChat",
         "title": "OpenGravity: Clear Chat History"
+      },
+      {
+        "command": "opengravity.clearProjectHistory",
+        "title": "OpenGravity: Clear Project History"
+      },
+      {
+        "command": "opengravity.clearAllHistory",
+        "title": "OpenGravity: Clear All Projects History"
       }
     ],
     "configuration": {
